@@ -1,0 +1,15 @@
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    # Public
+    path("", views.ProductListView.as_view(), name="products"),
+    path("<int:pk>/", views.ProductDetailView.as_view(), name="product-detail"),
+    path("<int:pk>/reviews/", views.ProductReviewListCreateView.as_view(), name="product-reviews"),
+    # Buyer
+    path("wishlist/", views.WishlistView.as_view(), name="wishlist"),
+    path("wishlist/<int:pk>/", views.WishlistItemView.as_view(), name="wishlist-item"),
+    # Vendor
+    path("vendor/", views.VendorProductListCreateView.as_view(), name="vendor-products"),
+    path("vendor/<int:pk>/", views.VendorProductDetailView.as_view(), name="vendor-product-detail"),
+]

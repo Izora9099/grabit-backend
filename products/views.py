@@ -1,0 +1,96 @@
+from rest_framework import generics, filters, status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from .models import Product, Review, WishlistItem
+from .serializers import (
+    ProductDetailSerializer, ProductListSerializer,
+    ProductWriteSerializer, ReviewSerializer, WishlistSerializer,
+)
+
+
+class ProductListView(generics.ListAPIView):
+    serializer_class = ProductListSerializer
+    permission_classes = [AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name", "description", "category"]
+    ordering_fields = ["price", "rating", "created_at"]
+
+    def get_queryset(self):
+        qs = Product.objects.filter(status="live").select_related("shop")
+        category = self.request.query_params.get("category")
+        city = self.request.query_params.get("city")
+        condition = self.request.query_params.get("condition")
+        min_price = self.request.query_params.get("min_price")
+        max_price = self.request.query_params.get("max_price")
+        if category:
+            qs = qs.filter(category__iexact=category)
+        if city:
+            qs = qs.filter(shop__city__iexact=city)
+        if condition:
+            qs = qs.filter(condition=condition)
+        if min_price:
+            qs = qs.filter(price__gte=min_price)
+        if max_price:
+            qs = qs.filter(price__lte=max_price)
+        return qs
+
+
+class ProductDetailView(generics.RetrieveAPIView):
+    queryset = Product.objects.filter(status="live").select_related("shop")
+    serializer_class = ProductDetailSerializer
+    permission_classes = [AllowAny]
+
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+        obj.views += 1
+        obj.save(update_fields=["views"])
+        return super().retrieve(request, *args, **kwargs)
+
+
+class VendorProductListCreateView(generics.ListCreateAPIView):
+    """Vendor-only: list & create their own products."""
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return ProductWriteSerializer
+        return ProductListSerializer
+
+    def get_queryset(self):
+        return Product.objects.filter(shop=self.request.user.shop)
+
+
+class VendorProductDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = ProductWriteSerializer
+
+    def get_queryset(self):
+        return Product.objects.filter(shop=self.request.user.shop)
+
+
+class ProductReviewListCreateView(generics.ListCreateAPIView):
+    serializer_class = ReviewSerializer
+
+    def get_permissions(self):
+        return [AllowAny()] if self.request.method == "GET" else [IsAuthenticated()]
+
+    def get_queryset(self):
+        return Review.objects.filter(product_id=self.kwargs["pk"])
+
+    def perform_create(self, serializer):
+        serializer.save(buyer=self.request.user, product_id=self.kwargs["pk"])
+
+
+class WishlistView(generics.ListCreateAPIView):
+    serializer_class = WishlistSerializer
+
+    def get_queryset(self):
+        return WishlistItem.objects.filter(user=self.request.user).select_related("product")
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class WishlistItemView(generics.DestroyAPIView):
+    serializer_class = WishlistSerializer
+
+    def get_queryset(self):
+        return WishlistItem.objects.filter(user=self.request.user)

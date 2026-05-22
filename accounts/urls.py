@@ -1,0 +1,25 @@
+from django.urls import path
+from . import views
+from . import admin_views
+
+urlpatterns = [
+    path("register/", views.RegisterView.as_view(), name="register"),
+    path("login/", views.LoginView.as_view(), name="login"),
+    path("logout/", views.LogoutView.as_view(), name="logout"),
+    path("me/", views.MeView.as_view(), name="me"),
+    path("me/addresses/", views.AddressListCreateView.as_view(), name="addresses"),
+    path("me/addresses/<int:pk>/", views.AddressDetailView.as_view(), name="address-detail"),
+    # Admin
+    path("admin/stats/", admin_views.AdminStatsView.as_view(), name="admin-stats"),
+    path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-users"),
+    path("admin/users/<int:pk>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),
+    path("admin/gmv/", admin_views.AdminGMVView.as_view(), name="admin-gmv"),
+    path("admin/shops/", admin_views.AdminShopListView.as_view(), name="admin-shops"),
+    path("admin/verification/", admin_views.AdminVerificationQueueView.as_view(), name="admin-verification"),
+    path("admin/verification/<int:shop_id>/", admin_views.AdminVerifyShopView.as_view(), name="admin-verify-shop"),
+    path("admin/disputes/", admin_views.AdminDisputeListView.as_view(), name="admin-disputes"),
+    path("admin/payouts/", admin_views.AdminPayoutListView.as_view(), name="admin-payouts"),
+    path("admin/commissions/", admin_views.AdminCommissionsView.as_view(), name="admin-commissions"),
+    path("admin/health/", admin_views.AdminHealthView.as_view(), name="admin-health"),
+    path("admin/fraud/", admin_views.AdminFraudSignalsView.as_view(), name="admin-fraud"),
+]
