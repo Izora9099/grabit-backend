@@ -29,6 +29,9 @@ db.sqlite3-journal
 staticfiles/
 media/
 
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/settings.local.json
+
 # ── IDE & OS ──────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
