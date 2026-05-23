@@ -1,9 +1,11 @@
 from rest_framework import generics, status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Shop, ShopFollow, KYCDocument
-from .serializers import ShopSerializer, ShopCreateSerializer, KYCDocumentSerializer
+from django.db.models import Avg, Count
+from .models import Shop, ShopFollow, ShopReview, KYCDocument
+from .serializers import ShopSerializer, ShopCreateSerializer, ShopReviewSerializer, KYCDocumentSerializer
 from products.models import Product
 from products.serializers import ProductListSerializer
 
@@ -55,6 +57,7 @@ class ShopFollowView(APIView):
 
 class MyShopView(generics.RetrieveUpdateAPIView):
     serializer_class = ShopSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_object(self):
         return self.request.user.shop
@@ -93,3 +96,21 @@ class FollowedShopsView(generics.ListAPIView):
     def get_queryset(self):
         followed_ids = ShopFollow.objects.filter(user=self.request.user).values_list("shop_id", flat=True)
         return Shop.objects.filter(id__in=followed_ids)
+
+
+class ShopReviewListCreateView(generics.ListCreateAPIView):
+    serializer_class = ShopReviewSerializer
+
+    def get_permissions(self):
+        return [AllowAny()] if self.request.method == "GET" else [IsAuthenticated()]
+
+    def get_queryset(self):
+        return ShopReview.objects.filter(shop__handle=self.kwargs["handle"])
+
+    def perform_create(self, serializer):
+        shop = Shop.objects.get(handle=self.kwargs["handle"])
+        serializer.save(buyer=self.request.user, shop=shop)
+        agg = ShopReview.objects.filter(shop=shop).aggregate(avg=Avg("rating"), count=Count("id"))
+        shop.rating = round(agg["avg"] or 0, 2)
+        shop.reviews_count = agg["count"]
+        shop.save(update_fields=["rating", "reviews_count"])

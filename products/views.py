@@ -1,10 +1,12 @@
 from rest_framework import generics, filters, status
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Product, Review, WishlistItem
+from django.shortcuts import get_object_or_404
+from .models import Product, ProductImage, Review, WishlistItem
 from .serializers import (
-    ProductDetailSerializer, ProductListSerializer,
+    ProductDetailSerializer, ProductImageSerializer, ProductListSerializer,
     ProductWriteSerializer, ReviewSerializer, WishlistSerializer,
 )
 
@@ -94,3 +96,32 @@ class WishlistItemView(generics.DestroyAPIView):
 
     def get_queryset(self):
         return WishlistItem.objects.filter(user=self.request.user)
+
+
+class ProductImageListCreateView(generics.ListCreateAPIView):
+    """Vendor-only: list and upload images for one of their products."""
+    serializer_class = ProductImageSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    def _get_product(self):
+        return get_object_or_404(Product, pk=self.kwargs["pk"], shop=self.request.user.shop)
+
+    def get_queryset(self):
+        return self._get_product().images.all()
+
+    def perform_create(self, serializer):
+        product = self._get_product()
+        is_primary = not product.images.exists()
+        serializer.save(product=product, is_primary=is_primary)
+
+
+class ProductImageDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Vendor-only: set-primary or delete a product image."""
+    serializer_class = ProductImageSerializer
+    lookup_url_kwarg = "img_pk"
+
+    def get_queryset(self):
+        return ProductImage.objects.filter(
+            product_id=self.kwargs["pk"],
+            product__shop=self.request.user.shop,
+        )

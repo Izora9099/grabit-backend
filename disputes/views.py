@@ -1,8 +1,10 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.utils import timezone
 from .models import Dispute
 from .serializers import DisputeSerializer, DisputeCreateSerializer
+from orders.models import EscrowEvent
 
 
 class DisputeListCreateView(generics.ListCreateAPIView):
@@ -33,15 +35,41 @@ class ResolveDisputeView(APIView):
         if request.user.role != "admin":
             return Response({"detail": "Admin only."}, status=403)
         dispute = Dispute.objects.get(dispute_id=dispute_id)
-        dispute.resolution = request.data.get("resolution")
+        resolution = request.data.get("resolution")
+        if resolution not in ("release_vendor", "refund_buyer", "partial_refund"):
+            return Response({"detail": "Invalid resolution value."}, status=400)
+
+        dispute.resolution = resolution
         dispute.admin_note = request.data.get("admin_note", "")
         dispute.status = "resolved"
         dispute.resolved_by = request.user
-        from django.utils import timezone
         dispute.resolved_at = timezone.now()
-        if dispute.resolution == "release_vendor":
-            dispute.order.escrow_released = True
-            dispute.order.status = "completed"
-            dispute.order.save()
+
+        order = dispute.order
+        if resolution == "release_vendor":
+            order.escrow_released = True
+            order.status = "completed"
+            order.save()
+            EscrowEvent.objects.create(
+                order=order, event="released", amount=order.total,
+                note="Released to vendor after dispute resolution.",
+            )
+        elif resolution == "refund_buyer":
+            order.escrow_released = False
+            order.status = "cancelled"
+            order.save()
+            EscrowEvent.objects.create(
+                order=order, event="refunded", amount=order.total,
+                note="Full refund issued to buyer after dispute resolution.",
+            )
+        elif resolution == "partial_refund":
+            order.escrow_released = True
+            order.status = "completed"
+            order.save()
+            EscrowEvent.objects.create(
+                order=order, event="partial_refund", amount=order.total,
+                note=f"Partial refund. Admin note: {dispute.admin_note}",
+            )
+
         dispute.save()
         return Response(DisputeSerializer(dispute).data)

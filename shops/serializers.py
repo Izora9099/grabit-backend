@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Shop, ShopFollow, KYCDocument
+from .models import Shop, ShopFollow, ShopReview, KYCDocument
 
 
 class ShopSerializer(serializers.ModelSerializer):
@@ -30,11 +30,21 @@ class ShopCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Shop
         fields = ["name", "handle", "tagline", "description", "category", "city",
-                  "neighbourhood", "whatsapp", "email", "delivery_fee",
-                  "free_shipping_threshold", "return_policy", "processing_time"]
+                  "neighbourhood", "logo", "banner", "accent_color", "whatsapp",
+                  "email", "delivery_fee", "free_shipping_threshold",
+                  "return_policy", "processing_time"]
 
     def create(self, validated_data):
         return Shop.objects.create(owner=self.context["request"].user, **validated_data)
+
+
+class ShopReviewSerializer(serializers.ModelSerializer):
+    buyer_name = serializers.CharField(source="buyer.get_full_name", read_only=True)
+
+    class Meta:
+        model = ShopReview
+        fields = ["id", "buyer_name", "rating", "body", "created_at"]
+        read_only_fields = ["id", "buyer_name", "created_at"]
 
 
 class KYCDocumentSerializer(serializers.ModelSerializer):

@@ -51,6 +51,21 @@ class ShopFollow(models.Model):
         unique_together = ("user", "shop")
 
 
+class ShopReview(models.Model):
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="shop_reviews")
+    buyer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="shop_reviews")
+    rating = models.PositiveSmallIntegerField()  # 1–5
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("shop", "buyer")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.buyer.get_full_name()} → {self.shop.name} ({self.rating}★)"
+
+
 class KYCDocument(models.Model):
     STATUS_CHOICES = [("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected"), ("not_submitted", "Not submitted")]
     TYPE_CHOICES = [("identity", "Identity"), ("address", "Address proof"), ("business", "Business registration")]

@@ -10,5 +10,6 @@ urlpatterns = [
     # slug routes MUST come after all fixed "my/" routes
     path("<slug:handle>/follow/", views.ShopFollowView.as_view(), name="shop-follow"),
     path("<slug:handle>/products/", views.ShopProductsView.as_view(), name="shop-products"),
+    path("<slug:handle>/reviews/", views.ShopReviewListCreateView.as_view(), name="shop-reviews"),
     path("<slug:handle>/", views.ShopDetailView.as_view(), name="shop-detail"),
 ]

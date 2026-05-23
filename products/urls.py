@@ -12,4 +12,6 @@ urlpatterns = [
     # Vendor
     path("vendor/", views.VendorProductListCreateView.as_view(), name="vendor-products"),
     path("vendor/<int:pk>/", views.VendorProductDetailView.as_view(), name="vendor-product-detail"),
+    path("vendor/<int:pk>/images/", views.ProductImageListCreateView.as_view(), name="vendor-product-images"),
+    path("vendor/<int:pk>/images/<int:img_pk>/", views.ProductImageDetailView.as_view(), name="vendor-product-image-detail"),
 ]
