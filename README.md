@@ -15,10 +15,11 @@ Built with **Django 4.2** + **Django REST Framework**.
 5. [User Roles](#user-roles)
 6. [Authentication](#authentication)
 7. [API Reference](#api-reference)
-8. [Key Workflows](#key-workflows)
-9. [Environment Variables](#environment-variables)
-10. [Running Tests](#running-tests)
-11. [Deployment](#deployment)
+8. [Frontend Endpoint Reference](#frontend-endpoint-reference)
+9. [Key Workflows](#key-workflows)
+10. [Environment Variables](#environment-variables)
+11. [Running Tests](#running-tests)
+12. [Deployment](#deployment)
 
 ---
 
@@ -246,6 +247,7 @@ Interactive docs with try-it-out buttons are at **http://localhost:8000/api/docs
 | POST | `login/` | Get token | Public |
 | POST | `logout/` | Invalidate token | Required |
 | GET/PATCH | `me/` | Current user profile | Required |
+| POST | `me/change-password/` | Change password | Required |
 | GET/POST | `me/addresses/` | Delivery addresses | Required |
 | GET/PATCH/DELETE | `me/addresses/<id>/` | Address detail | Required |
 
@@ -320,6 +322,128 @@ Query params for product list: `search`, `category`, `city`, `condition`, `min_p
 | GET | `commissions/` | Monthly commission report |
 | GET | `health/` | System health checks |
 | GET | `fraud/` | Fraud signal detection |
+
+---
+
+## Frontend Endpoint Reference
+
+All endpoints are prefixed with `/api/v1`. Base URL in development: `http://localhost:8000`.
+
+Every authenticated request must include:
+```
+Authorization: Token <token>
+```
+
+The token is returned by both `/auth/register/` and `/auth/login/`.
+
+---
+
+### Public — no auth required
+
+| Method | Endpoint | Notes |
+|---|---|---|
+| POST | `/auth/register/` | Body: `email`, `password`, `first_name`, `last_name`, `role`, `phone`, `city`. Returns `{token, user}` |
+| POST | `/auth/login/` | Body: `email`, `password`. Returns `{token, user}` |
+| GET | `/products/` | Query params: `search`, `category`, `city`, `condition`, `min_price`, `max_price`, `ordering` |
+| GET | `/products/<id>/` | Full product detail |
+| GET | `/products/<id>/reviews/` | All reviews for a product |
+| GET | `/shops/` | Query params: `city`, `category` |
+| GET | `/shops/<handle>/` | Shop detail by URL handle |
+| GET | `/shops/<handle>/products/` | Live products from a specific shop |
+
+---
+
+### All authenticated users
+
+| Method | Endpoint | Notes |
+|---|---|---|
+| POST | `/auth/logout/` | Deletes the current token |
+| GET | `/auth/me/` | Current user profile |
+| PATCH | `/auth/me/` | Update profile fields (`first_name`, `last_name`, `phone`, `city`, `avatar`) |
+| GET | `/auth/me/addresses/` | Saved delivery addresses |
+| POST | `/auth/me/addresses/` | Add address. Body: `label`, `line`, `city`, `is_primary` |
+| PATCH / DELETE | `/auth/me/addresses/<id>/` | Edit or remove a single address |
+| POST | `/auth/me/change-password/` | Change password. Body: `current_password`, `new_password` (min 6 chars) |
+| GET | `/notifications/` | Notification feed for the current user |
+| POST | `/notifications/read-all/` | Mark every notification as read |
+| PATCH | `/notifications/<id>/` | Mark a single notification read |
+
+---
+
+### Buyer
+
+| Method | Endpoint | Notes |
+|---|---|---|
+| GET | `/orders/` | Buyer's own orders |
+| POST | `/orders/` | Place an order. Body: `shop` (id), `items` (array of `{product, quantity}`), `delivery_address`, `city` |
+| GET | `/orders/<order_id>/` | Order detail (e.g. `GR-10001`) |
+| POST | `/orders/<order_id>/confirm/` | Confirm delivery received — completes order and releases escrow |
+| GET / POST | `/orders/messages/` | In-app messages with vendors. POST body: `recipient`, `order`, `body` |
+| POST | `/payments/initiate/` | Trigger payment. Body: `order_id`, `method` (`mtn_momo` / `orange_money` / `bank_transfer`), `phone_number` |
+| GET | `/products/wishlist/` | Wishlist items |
+| POST | `/products/wishlist/` | Add to wishlist. Body: `product` (id) |
+| DELETE | `/products/wishlist/<id>/` | Remove a wishlist item |
+| POST | `/products/<id>/reviews/` | Post a review. Body: `rating` (1–5), `text` |
+| POST | `/shops/<handle>/follow/` | Toggle follow/unfollow (returns `{following: true/false}`) |
+| GET | `/shops/followed/` | All shops the buyer follows |
+| GET | `/disputes/` | Buyer's disputes |
+| POST | `/disputes/` | Open a dispute. Body: `order` (id), `reason`, `description` |
+| GET | `/disputes/<dispute_id>/` | Dispute detail (e.g. `DSP-300`) |
+
+---
+
+### Vendor
+
+| Method | Endpoint | Notes |
+|---|---|---|
+| POST | `/shops/my/create/` | Create a new shop (first-time only). Body: `name`, `handle`, `category`, `city`, `tagline`, `description`, etc. |
+| GET | `/shops/my/` | Vendor's own shop data |
+| PATCH | `/shops/my/` | Update shop details |
+| GET | `/shops/my/kyc/` | KYC documents uploaded for the shop |
+| POST | `/shops/my/kyc/` | Upload a KYC document. Body: `doc_type`, `label` |
+| GET | `/products/vendor/` | All of the vendor's products (all statuses) |
+| POST | `/products/vendor/` | Create a product. Body: `name`, `description`, `price`, `category`, `condition`, `stock`, `status` |
+| GET | `/products/vendor/<id>/` | Single vendor product |
+| PATCH | `/products/vendor/<id>/` | Edit product fields |
+| DELETE | `/products/vendor/<id>/` | Delete a product |
+| GET | `/orders/` | Incoming orders for the vendor's shop |
+| GET | `/orders/<order_id>/` | Order detail |
+| PATCH | `/orders/<order_id>/status/` | Advance order status. Allowed transitions: `paid_escrow → preparing`, `preparing → picked_up` |
+| GET / POST | `/orders/messages/` | In-app messages with buyers |
+| GET | `/payments/payouts/` | Payout history |
+
+---
+
+### Agent
+
+| Method | Endpoint | Notes |
+|---|---|---|
+| GET | `/orders/agent/assignments/` | Assigned deliveries. Optional query param: `status` |
+| GET | `/orders/agent/stats/` | Returns `today_deliveries`, `week_deliveries`, `week_earnings`, `active_assignments` |
+| GET | `/orders/<order_id>/` | Order detail |
+| PATCH | `/orders/<order_id>/status/` | Advance delivery status. Allowed transitions: `picked_up → in_transit`, `in_transit → delivered_confirm` |
+| GET / POST | `/orders/messages/` | In-app messages |
+| GET | `/payments/payouts/` | Earnings / payout history |
+
+---
+
+### Admin — `/auth/admin/` prefix, all require `role: admin`
+
+| Method | Endpoint | Notes |
+|---|---|---|
+| GET | `/auth/admin/stats/` | Platform KPIs: user counts, active shops, pending KYC, orders today, GMV |
+| GET | `/auth/admin/gmv/` | Daily GMV for last 30 days + top 10 vendors by revenue |
+| GET | `/auth/admin/commissions/` | Monthly commission report (last 12 months) |
+| GET | `/auth/admin/users/` | All users. Query params: `role`, `q` (search by email/username) |
+| PATCH | `/auth/admin/users/<id>/` | Toggle `is_active`, `role`, or `is_kyc_verified` |
+| GET | `/auth/admin/shops/` | All shops. Query param: `q` |
+| GET | `/auth/admin/verification/` | KYC queue — shops under review with their uploaded documents |
+| PATCH | `/auth/admin/verification/<shop_id>/` | Approve or reject a shop. Body: `{"action": "approve"}` or `{"action": "reject"}` |
+| GET | `/auth/admin/disputes/` | All disputes. Query param: `status` |
+| PATCH | `/disputes/<dispute_id>/resolve/` | Resolve a dispute. Body: `resolution` (`refund_buyer` / `release_vendor` / `partial_refund`), `admin_note` |
+| GET | `/auth/admin/payouts/` | All vendor/agent payouts |
+| GET | `/auth/admin/health/` | System health checks (DB connectivity, recent order pipeline) |
+| GET | `/auth/admin/fraud/` | Users flagged for ≥ 3 failed payment attempts |
 
 ---
 
