@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
 from rest_framework.authtoken.models import Token
-from .models import User, Address
+from .models import User, Address, AgentKYCDocument
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -91,3 +91,10 @@ class AddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
         fields = ["id", "label", "line", "city", "is_primary"]
+
+
+class AgentKYCDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentKYCDocument
+        fields = ["id", "doc_type", "label", "file", "status", "reviewed_at", "created_at"]
+        read_only_fields = ["id", "status", "reviewed_at", "created_at"]

@@ -283,6 +283,8 @@ Query params for product list: `search`, `category`, `city`, `condition`, `min_p
 | GET | `<order_id>/` | Order detail | Required |
 | PATCH | `<order_id>/status/` | Advance order status | Vendor / Agent |
 | POST | `<order_id>/confirm/` | Buyer confirms delivery | Buyer |
+| POST | `<order_id>/cancel/` | Vendor cancels order (before pickup) | Vendor |
+| POST | `<order_id>/decline/` | Agent declines assignment | Agent |
 | GET/POST | `messages/` | In-app messages | Required |
 | GET | `agent/assignments/` | Agent's deliveries | Agent |
 | GET | `agent/stats/` | Agent earnings & stats | Agent |
@@ -305,6 +307,7 @@ Query params for product list: `search`, `category`, `city`, `condition`, `min_p
 |---|---|---|---|
 | GET/POST | `` | List / file a dispute | Required |
 | GET | `<dispute_id>/` | Dispute detail | Required |
+| POST | `<dispute_id>/evidence/` | Upload / replace evidence file | Buyer |
 | PATCH | `<dispute_id>/resolve/` | Resolve dispute | Admin |
 
 #### Admin (`/api/v1/auth/admin/`)
@@ -315,8 +318,10 @@ Query params for product list: `search`, `category`, `city`, `condition`, `min_p
 | PATCH | `users/<id>/` | Edit user role / status |
 | GET | `gmv/` | Daily revenue + top vendors |
 | GET | `shops/` | All shops |
-| GET | `verification/` | KYC queue |
-| PATCH | `verification/<shop_id>/` | Approve / reject shop |
+| GET | `verification/` | Vendor KYC queue |
+| PATCH | `verification/<shop_id>/` | Approve / reject vendor shop |
+| GET | `agent-verification/` | Agent KYC queue |
+| PATCH | `agent-verification/<user_id>/` | Approve / reject agent KYC |
 | GET | `disputes/` | All disputes |
 | GET | `payouts/` | All payouts |
 | GET | `commissions/` | Monthly commission report |
@@ -408,7 +413,8 @@ The token is returned by both `/auth/register/` and `/auth/login/`.
 | DELETE | `/products/vendor/<id>/` | Delete a product |
 | GET | `/orders/` | Incoming orders for the vendor's shop |
 | GET | `/orders/<order_id>/` | Order detail |
-| PATCH | `/orders/<order_id>/status/` | Advance order status. Allowed transitions: `paid_escrow → preparing`, `preparing → picked_up` |
+| PATCH | `/orders/<order_id>/status/` | Advance order status. Allowed transitions: `paid_escrow → preparing`, `preparing → agent_assigned` |
+| POST | `/orders/<order_id>/cancel/` | Cancel order (only before pickup) |
 | GET / POST | `/orders/messages/` | In-app messages with buyers |
 | GET | `/payments/payouts/` | Payout history |
 
@@ -421,9 +427,12 @@ The token is returned by both `/auth/register/` and `/auth/login/`.
 | GET | `/orders/agent/assignments/` | Assigned deliveries. Optional query param: `status` |
 | GET | `/orders/agent/stats/` | Returns `today_deliveries`, `week_deliveries`, `week_earnings`, `active_assignments` |
 | GET | `/orders/<order_id>/` | Order detail |
-| PATCH | `/orders/<order_id>/status/` | Advance delivery status. Allowed transitions: `picked_up → in_transit`, `in_transit → delivered_confirm` |
+| PATCH | `/orders/<order_id>/status/` | Advance delivery status. Allowed transitions: `agent_assigned → picked_up`, `picked_up → in_transit`, `in_transit → delivered_confirm` |
+| POST | `/orders/<order_id>/decline/` | Decline assignment — order returns to `preparing` |
 | GET / POST | `/orders/messages/` | In-app messages |
 | GET | `/payments/payouts/` | Earnings / payout history |
+| GET / POST | `/auth/me/agent-kyc/` | Agent KYC documents |
+| GET / PATCH / DELETE | `/auth/me/agent-kyc/<id>/` | Single agent KYC document |
 
 ---
 
@@ -454,10 +463,20 @@ The token is returned by both `/auth/register/` and `/auth/login/`.
 1. Buyer creates order → `POST /orders/` — status: `awaiting_payment`
 2. Buyer initiates payment → `POST /payments/initiate/` — status: `paid_escrow`
 3. Vendor prepares → `PATCH /orders/<id>/status/` `{"status": "preparing"}`
-4. Agent picks up → `PATCH /orders/<id>/status/` `{"status": "picked_up"}`
-5. Agent in transit → `PATCH /orders/<id>/status/` `{"status": "in_transit"}`
-6. Agent delivers → `PATCH /orders/<id>/status/` `{"status": "delivered_confirm"}`
-7. Buyer confirms → `POST /orders/<id>/confirm/` — status: `completed`, escrow released
+4. Vendor assigns agent → `PATCH /orders/<id>/status/` `{"status": "agent_assigned"}`
+5. Agent accepts and picks up → `PATCH /orders/<id>/status/` `{"status": "picked_up"}`
+6. Agent in transit → `PATCH /orders/<id>/status/` `{"status": "in_transit"}`
+7. Agent delivers → `PATCH /orders/<id>/status/` `{"status": "delivered_confirm"}`
+8. Buyer confirms → `POST /orders/<id>/confirm/` — status: `completed`, escrow released
+
+> **Auto-release:** If the buyer does not confirm within **72 hours** of `delivered_confirm`, escrow is auto-released to the vendor and the order is marked `completed`.
+
+**Terminal states:** `completed`, `cancelled`, `refunded`, `partially_resolved`
+
+**Dispute path:** any order not yet `completed` can be escalated → status `disputed`. Admin resolves to:
+- `release_vendor` → order `completed`, escrow released
+- `refund_buyer` → order `refunded`, escrow returned
+- `partial_refund` → order `partially_resolved`, escrow released with a note
 
 ### Filing a dispute
 
@@ -479,10 +498,17 @@ An admin then resolves it via `PATCH /disputes/<id>/resolve/` with `resolution: 
 ### Vendor KYC / Shop verification
 
 1. Vendor creates shop → `POST /shops/my/create/`
-2. Vendor uploads KYC documents → `POST /shops/my/kyc/`
+2. Vendor uploads KYC documents → `POST /shops/my/kyc/` (multipart/form-data)
 3. Admin reviews queue → `GET /auth/admin/verification/`
 4. Admin approves → `PATCH /auth/admin/verification/<shop_id>/` `{"action": "approve"}`
 5. Shop status changes to `active`, `is_verified` set to `true`
+
+### Agent KYC / Onboarding
+
+1. Agent uploads KYC documents → `POST /auth/me/agent-kyc/` (multipart/form-data)
+2. Admin reviews queue → `GET /auth/admin/agent-verification/`
+3. Admin approves → `PATCH /auth/admin/agent-verification/<user_id>/` `{"action": "approve"}`
+4. Agent `is_kyc_verified` set to `true`
 
 ---
 

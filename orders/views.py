@@ -48,9 +48,10 @@ class OrderStatusUpdateView(APIView):
     ALLOWED_TRANSITIONS = {
         "vendor": {
             "paid_escrow": "preparing",
-            "preparing": "picked_up",  # marks as ready
+            "preparing": "agent_assigned",
         },
         "agent": {
+            "agent_assigned": "picked_up",
             "picked_up": "in_transit",
             "in_transit": "delivered_confirm",
         },
@@ -83,6 +84,35 @@ class ConfirmDeliveryView(APIView):
         order.escrow_released = True
         order.save()
         return Response({"detail": "Order confirmed. Escrow released to vendor."})
+
+
+class OrderCancelView(APIView):
+    """Vendor cancels an order before it has been picked up."""
+    def post(self, request, order_id):
+        try:
+            order = Order.objects.get(order_id=order_id, shop=request.user.shop)
+        except (Order.DoesNotExist, AttributeError):
+            return Response({"detail": "Not found."}, status=404)
+        if order.status not in ("awaiting_payment", "paid_escrow", "preparing", "agent_assigned"):
+            return Response({"detail": "Order cannot be cancelled at this stage."}, status=400)
+        order.status = "cancelled"
+        order.save()
+        return Response(OrderSerializer(order).data)
+
+
+class AgentDeclineView(APIView):
+    """Agent declines an assigned delivery — order returns to preparing for reassignment."""
+    def post(self, request, order_id):
+        try:
+            order = Order.objects.get(order_id=order_id, agent=request.user)
+        except Order.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
+        if order.status != "agent_assigned":
+            return Response({"detail": "You can only decline orders in agent_assigned status."}, status=400)
+        order.agent = None
+        order.status = "preparing"
+        order.save()
+        return Response(OrderSerializer(order).data)
 
 
 class MessageListCreateView(generics.ListCreateAPIView):

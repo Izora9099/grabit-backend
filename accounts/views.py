@@ -4,8 +4,11 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Address
-from .serializers import AddressSerializer, ChangePasswordSerializer, LoginSerializer, RegisterSerializer, UserSerializer
+from .models import Address, AgentKYCDocument
+from .serializers import (
+    AddressSerializer, AgentKYCDocumentSerializer, ChangePasswordSerializer,
+    LoginSerializer, RegisterSerializer, UserSerializer,
+)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -71,3 +74,25 @@ class AddressDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return Address.objects.filter(user=self.request.user)
+
+
+class AgentKYCListCreateView(generics.ListCreateAPIView):
+    """Agent-only: list and upload their own KYC documents."""
+    serializer_class = AgentKYCDocumentSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    pagination_class = None
+
+    def get_queryset(self):
+        return AgentKYCDocument.objects.filter(agent=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(agent=self.request.user)
+
+
+class AgentKYCDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Agent-only: retrieve, update or delete one of their KYC documents."""
+    serializer_class = AgentKYCDocumentSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        return AgentKYCDocument.objects.filter(agent=self.request.user)

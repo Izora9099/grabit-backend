@@ -67,7 +67,7 @@ class ShopReview(models.Model):
 
 
 class KYCDocument(models.Model):
-    STATUS_CHOICES = [("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected"), ("not_submitted", "Not submitted")]
+    STATUS_CHOICES = [("draft", "Draft"), ("pending", "Pending"), ("in_review", "In review"), ("approved", "Approved"), ("rejected", "Rejected"), ("not_submitted", "Not submitted")]
     TYPE_CHOICES = [("identity", "Identity"), ("address", "Address proof"), ("business", "Business registration")]
 
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="kyc_documents")

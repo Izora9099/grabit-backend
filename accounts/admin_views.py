@@ -264,3 +264,45 @@ class AdminFraudSignalsView(APIView):
         return Response({
             "flagged_users": list(flagged),
         })
+
+
+class AdminAgentKYCQueueView(APIView):
+    """List agents with pending KYC documents."""
+    @admin_required
+    def get(self, request):
+        from .models import AgentKYCDocument
+        from .serializers import AgentKYCDocumentSerializer
+        pending_docs = AgentKYCDocument.objects.filter(status="pending").select_related("agent")
+        result = {}
+        for doc in pending_docs:
+            uid = doc.agent_id
+            if uid not in result:
+                result[uid] = {
+                    "user_id": uid,
+                    "username": doc.agent.username,
+                    "email": doc.agent.email,
+                    "full_name": doc.agent.get_full_name(),
+                    "documents": [],
+                }
+            result[uid]["documents"].append(AgentKYCDocumentSerializer(doc).data)
+        return Response(list(result.values()))
+
+
+class AdminVerifyAgentView(APIView):
+    """Approve or reject an agent's KYC — updates is_kyc_verified on the user."""
+    @admin_required
+    def patch(self, request, user_id):
+        from django.utils import timezone
+        from .models import AgentKYCDocument
+        agent = User.objects.get(pk=user_id, role="agent")
+        action = request.data.get("action")  # "approve" | "reject"
+        if action not in ("approve", "reject"):
+            return Response({"detail": "action must be 'approve' or 'reject'."}, status=400)
+        new_status = "approved" if action == "approve" else "rejected"
+        AgentKYCDocument.objects.filter(agent=agent, status="pending").update(
+            status=new_status, reviewed_at=timezone.now()
+        )
+        if action == "approve":
+            agent.is_kyc_verified = True
+            agent.save(update_fields=["is_kyc_verified"])
+        return Response(UserSerializer(agent).data)

@@ -10,6 +10,8 @@ urlpatterns = [
     path("me/change-password/", views.ChangePasswordView.as_view(), name="change-password"),
     path("me/addresses/", views.AddressListCreateView.as_view(), name="addresses"),
     path("me/addresses/<int:pk>/", views.AddressDetailView.as_view(), name="address-detail"),
+    path("me/agent-kyc/", views.AgentKYCListCreateView.as_view(), name="agent-kyc"),
+    path("me/agent-kyc/<int:pk>/", views.AgentKYCDetailView.as_view(), name="agent-kyc-detail"),
     # Admin
     path("admin/stats/", admin_views.AdminStatsView.as_view(), name="admin-stats"),
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-users"),
@@ -23,4 +25,6 @@ urlpatterns = [
     path("admin/commissions/", admin_views.AdminCommissionsView.as_view(), name="admin-commissions"),
     path("admin/health/", admin_views.AdminHealthView.as_view(), name="admin-health"),
     path("admin/fraud/", admin_views.AdminFraudSignalsView.as_view(), name="admin-fraud"),
+    path("admin/agent-verification/", admin_views.AdminAgentKYCQueueView.as_view(), name="admin-agent-kyc-queue"),
+    path("admin/agent-verification/<int:user_id>/", admin_views.AdminVerifyAgentView.as_view(), name="admin-verify-agent"),
 ]

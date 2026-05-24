@@ -13,10 +13,13 @@
 **Body:**
 ```json
 {
-  "username": "john",
   "email": "john@example.com",
   "password": "securepassword",
-  "role": "buyer"  // "buyer" | "vendor" | "agent"
+  "first_name": "John",
+  "last_name": "Doe",
+  "role": "buyer",
+  "phone": "6XXXXXXXX",
+  "city": "Douala"
 }
 ```
 
@@ -24,7 +27,7 @@
 ```json
 {
   "token": "abc123...",
-  "user": { "id": 1, "username": "john", "email": "john@example.com", "role": "buyer" }
+  "user": { "id": 1, "email": "john@example.com", "first_name": "John", "last_name": "Doe", "role": "buyer" }
 }
 ```
 
@@ -35,14 +38,14 @@
 
 **Body:**
 ```json
-{ "username": "john", "password": "securepassword" }
+{ "email": "john@example.com", "password": "securepassword" }
 ```
 
 **Response `200`:**
 ```json
 {
   "token": "abc123...",
-  "user": { "id": 1, "username": "john", "role": "buyer" }
+  "user": { "id": 1, "email": "john@example.com", "role": "buyer" }
 }
 ```
 
@@ -63,29 +66,40 @@ No body needed. Invalidates the current token.
 `GET /auth/me/` 🔒  
 `PATCH /auth/me/` 🔒
 
-**PATCH Body (any fields):**
+**PATCH Body (any fields, multipart/form-data for avatar):**
 ```json
-{ "username": "newname", "email": "new@email.com" }
+{ "first_name": "John", "last_name": "Doe", "phone": "6XXXXXXXX", "city": "Douala" }
 ```
 
 ---
 
 ### Addresses
-`GET /auth/addresses/` 🔒 — list addresses  
-`POST /auth/addresses/` 🔒 — add address  
-`GET /auth/addresses/<id>/` 🔒  
-`PATCH /auth/addresses/<id>/` 🔒  
-`DELETE /auth/addresses/<id>/` 🔒
+`GET /auth/me/addresses/` 🔒 — list addresses  
+`POST /auth/me/addresses/` 🔒 — add address  
+`GET /auth/me/addresses/<id>/` 🔒  
+`PATCH /auth/me/addresses/<id>/` 🔒  
+`DELETE /auth/me/addresses/<id>/` 🔒
 
 **POST Body:**
 ```json
 {
-  "street": "123 Main St",
+  "label": "Home",
+  "line": "123 Main St",
   "city": "Buea",
-  "region": "South West",
-  "country": "Cameroon"
+  "is_primary": true
 }
 ```
+
+---
+
+### Agent KYC Documents
+`GET /auth/me/agent-kyc/` 🔒 — list agent KYC documents (agents only)  
+`POST /auth/me/agent-kyc/` 🔒 — upload a KYC document (multipart/form-data)  
+`GET /auth/me/agent-kyc/<id>/` 🔒  
+`PATCH /auth/me/agent-kyc/<id>/` 🔒  
+`DELETE /auth/me/agent-kyc/<id>/` 🔒
+
+**POST Body:** `multipart/form-data` — fields: `doc_type` (`identity` / `driving_license` / `vehicle` / `address`), `label`, `file`
 
 ---
 
@@ -121,22 +135,22 @@ Toggles follow state. First call follows, second call unfollows.
 ---
 
 ### My Shop (Vendor)
-`GET /shops/me/` 🔒  
-`PUT /shops/me/` 🔒  
-`PATCH /shops/me/` 🔒
+`GET /shops/my/` 🔒  
+`PUT /shops/my/` 🔒  
+`PATCH /shops/my/` 🔒 — supports `multipart/form-data` for `logo` and `banner` uploads
 
 ---
 
 ### Create My Shop (Vendor)
-`POST /shops/create/` 🔒
+`POST /shops/my/create/` 🔒
 
 ---
 
-### KYC Documents
-`GET /shops/kyc/` 🔒  
-`POST /shops/kyc/` 🔒
+### KYC Documents (Vendor Shop)
+`GET /shops/my/kyc/` 🔒  
+`POST /shops/my/kyc/` 🔒
 
-**POST Body:** `multipart/form-data` with document file + type field.
+**POST Body:** `multipart/form-data` — fields: `doc_type` (`identity` / `address` / `business`), `label`, `file`
 
 ---
 
@@ -276,10 +290,28 @@ Buyer confirms delivery → marks order `completed` and releases escrow to vendo
 
 ---
 
+### Vendor: Cancel Order
+`POST /orders/<order_id>/cancel/` 🔒
+
+Vendor cancels an order before it has been picked up. Allowed from: `awaiting_payment`, `paid_escrow`, `preparing`, `agent_assigned`.
+
+---
+
+### Agent: Decline Assignment
+`POST /orders/<order_id>/decline/` 🔒
+
+Agent declines an `agent_assigned` order — order returns to `preparing` for reassignment.
+
+---
+
 ### Order Status Flow
 
 ```
-[created] → paid_escrow → preparing → picked_up → in_transit → delivered_confirm → completed
+[created] → paid_escrow → preparing → agent_assigned → picked_up → in_transit → delivered_confirm → completed
+                                    ↘ cancelled
+                                                                                         ↘ disputed → refunded
+                                                                                                    → partially_resolved
+                                                                                                    → completed (release_vendor)
 ```
 
 ---
@@ -331,7 +363,7 @@ Buyer confirms delivery → marks order `completed` and releases escrow to vendo
 ---
 
 ### Mark All as Read
-`POST /notifications/mark-all-read/` 🔒
+`POST /notifications/read-all/` 🔒
 
 **Response:**
 ```json
@@ -346,10 +378,47 @@ Buyer confirms delivery → marks order `completed` and releases escrow to vendo
 
 ---
 
+## 📁 Disputes
+
+### File a Dispute / List Disputes
+`GET /disputes/` 🔒  
+`POST /disputes/` 🔒
+
+**POST Body:**
+```json
+{ "order": 1, "reason": "not_delivered", "description": "Package never arrived." }
+```
+
+---
+
+### Dispute Detail
+`GET /disputes/<dispute_id>/` 🔒
+
+---
+
+### Upload Evidence
+`POST /disputes/<dispute_id>/evidence/` 🔒
+
+Upload or replace evidence after a dispute has been filed. Body: `multipart/form-data` with `evidence` file field.
+
+---
+
+### Resolve Dispute (Admin)
+`PATCH /disputes/<dispute_id>/resolve/` 🔒
+
+**Body:**
+```json
+{ "resolution": "refund_buyer", "admin_note": "Item clearly not delivered." }
+```
+
+`resolution` options: `refund_buyer` (order → `refunded`) | `release_vendor` (order → `completed`) | `partial_refund` (order → `partially_resolved`)
+
+---
+
 ## 🚴 Agent Endpoints
 
 ### Agent's Assigned Deliveries
-`GET /orders/agent/` 🔒
+`GET /orders/agent/assignments/` 🔒
 
 **Query param:** `?status=in_transit` — filter by status
 
@@ -384,6 +453,28 @@ fetch(url, {
   }
 });
 ```
+
+---
+
+## 🛡️ Admin Endpoints
+All require `Authorization: Token <admin_token>`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/auth/admin/stats/` | Platform KPIs |
+| GET | `/auth/admin/users/` | All users (`?role=`, `?q=`) |
+| PATCH | `/auth/admin/users/<id>/` | Toggle `is_active`, `role`, `is_kyc_verified` |
+| GET | `/auth/admin/gmv/` | Daily GMV + top vendors |
+| GET | `/auth/admin/shops/` | All shops (`?q=`) |
+| GET | `/auth/admin/verification/` | Vendor KYC queue |
+| PATCH | `/auth/admin/verification/<shop_id>/` | Approve/reject vendor shop |
+| GET | `/auth/admin/agent-verification/` | Agent KYC queue |
+| PATCH | `/auth/admin/agent-verification/<user_id>/` | Approve/reject agent KYC |
+| GET | `/auth/admin/disputes/` | All disputes (`?status=`) |
+| GET | `/auth/admin/payouts/` | All payouts |
+| GET | `/auth/admin/commissions/` | Monthly commission report |
+| GET | `/auth/admin/health/` | System health checks |
+| GET | `/auth/admin/fraud/` | Fraud signals (users with 3+ failed payments) |
 
 ---
 

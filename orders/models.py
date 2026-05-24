@@ -9,12 +9,15 @@ class Order(models.Model):
         ("awaiting_payment", "Awaiting payment"),
         ("paid_escrow", "Paid — escrow held"),
         ("preparing", "Preparing"),
+        ("agent_assigned", "Agent assigned"),
         ("picked_up", "Picked up"),
         ("in_transit", "In transit"),
         ("delivered_confirm", "Delivered — confirm"),
         ("completed", "Completed"),
         ("disputed", "Disputed"),
         ("cancelled", "Cancelled"),
+        ("refunded", "Refunded"),
+        ("partially_resolved", "Partially resolved"),
     ]
 
     order_id = models.CharField(max_length=20, unique=True)  # e.g. GR-10231

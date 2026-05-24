@@ -1,4 +1,5 @@
 from rest_framework import generics, status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
@@ -56,7 +57,7 @@ class ResolveDisputeView(APIView):
             )
         elif resolution == "refund_buyer":
             order.escrow_released = False
-            order.status = "cancelled"
+            order.status = "refunded"
             order.save()
             EscrowEvent.objects.create(
                 order=order, event="refunded", amount=order.total,
@@ -64,7 +65,7 @@ class ResolveDisputeView(APIView):
             )
         elif resolution == "partial_refund":
             order.escrow_released = True
-            order.status = "completed"
+            order.status = "partially_resolved"
             order.save()
             EscrowEvent.objects.create(
                 order=order, event="partial_refund", amount=order.total,
@@ -72,4 +73,23 @@ class ResolveDisputeView(APIView):
             )
 
         dispute.save()
+        return Response(DisputeSerializer(dispute).data)
+
+
+class DisputeEvidenceUploadView(APIView):
+    """Upload or replace the evidence file on an existing dispute."""
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, dispute_id):
+        try:
+            dispute = Dispute.objects.get(dispute_id=dispute_id, opened_by=request.user)
+        except Dispute.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
+        if dispute.status == "resolved":
+            return Response({"detail": "Cannot add evidence to a resolved dispute."}, status=400)
+        file = request.FILES.get("evidence")
+        if not file:
+            return Response({"detail": "No file provided."}, status=400)
+        dispute.evidence = file
+        dispute.save(update_fields=["evidence"])
         return Response(DisputeSerializer(dispute).data)
