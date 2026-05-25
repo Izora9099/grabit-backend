@@ -3,7 +3,7 @@ Production settings — PostgreSQL, locked-down CORS, Whitenoise for static file
 """
 from .base import *  # noqa: F401, F403
 import dj_database_url
-from decouple import config
+from decouple import config, Csv
 
 DEBUG = False
 
