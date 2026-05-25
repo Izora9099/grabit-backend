@@ -2,24 +2,39 @@
 
 REST API for the **GrabIT** marketplace platform — a multi-role e-commerce system for Cameroon with escrow-secured payments, vendor shops, delivery agents, and an admin console.
 
-Built with **Django 4.2** + **Django REST Framework**.
+Built with **Django 4.2** + **Django REST Framework**, deployed on **Railway**, backed by **PostgreSQL on Supabase**.
+
+> **New to the project?** Read the [Infrastructure & Technology Reference](#infrastructure--technology-reference) section before touching any code or configuration.
 
 ---
 
 ## Table of Contents
 
 1. [Tech Stack](#tech-stack)
-2. [Prerequisites](#prerequisites)
-3. [Getting Started](#getting-started)
-4. [Project Structure](#project-structure)
-5. [User Roles](#user-roles)
-6. [Authentication](#authentication)
-7. [API Reference](#api-reference)
-8. [Frontend Endpoint Reference](#frontend-endpoint-reference)
-9. [Key Workflows](#key-workflows)
-10. [Environment Variables](#environment-variables)
-11. [Running Tests](#running-tests)
-12. [Deployment](#deployment)
+2. [Infrastructure & Technology Reference](#infrastructure--technology-reference)
+   - [System Overview](#system-overview)
+   - [Three-Layer Architecture](#three-layer-architecture)
+   - [Layer 1 — Django on Railway](#layer-1--django-on-railway)
+   - [Layer 2 — PostgreSQL on Supabase](#layer-2--postgresql-on-supabase)
+   - [Layer 3 — Frontend on Cloudflare Pages](#layer-3--frontend-on-cloudflare-pages)
+   - [Python Packages Explained](#python-packages-explained)
+   - [Settings Architecture](#settings-architecture)
+   - [Django Apps — What Each One Does](#django-apps--what-each-one-does)
+   - [Authentication System Deep Dive](#authentication-system-deep-dive)
+   - [How a Request Travels Through the System](#how-a-request-travels-through-the-system)
+3. [Prerequisites](#prerequisites)
+4. [Getting Started](#getting-started)
+5. [Project Structure](#project-structure)
+6. [User Roles](#user-roles)
+7. [Authentication](#authentication)
+8. [API Reference](#api-reference)
+9. [Frontend Endpoint Reference](#frontend-endpoint-reference)
+10. [Key Workflows](#key-workflows)
+11. [Environment Variables](#environment-variables)
+12. [Running Tests](#running-tests)
+13. [Deployment](#deployment)
+14. [Live URLs](#live-urls)
+15. [Glossary](#glossary)
 
 ---
 
@@ -27,23 +42,266 @@ Built with **Django 4.2** + **Django REST Framework**.
 
 | Layer | Technology |
 |---|---|
-| Framework | Django 4.2 |
+| Framework | Django 4.2 (LTS) |
 | API | Django REST Framework 3.15 |
 | Auth | DRF Token Authentication |
 | Filtering | django-filter |
 | API Docs | drf-spectacular (OpenAPI 3 / Swagger) |
 | Images | Pillow |
 | Config | python-decouple |
-| Dev server | Django `runserver` |
-| Production server | Gunicorn + Whitenoise |
-| Database (dev) | SQLite |
-| Database (prod) | PostgreSQL |
+| Database driver | psycopg2-binary |
+| Dev database | SQLite |
+| Production database | PostgreSQL (Supabase) |
+| Production server | Gunicorn |
+| Static files | Whitenoise |
+| Backend hosting | Railway |
+| Frontend hosting | Cloudflare Pages |
+
+---
+
+## Infrastructure & Technology Reference
+
+> **Audience:** New backend developers, frontend developers integrating with the API, QA testers, and project managers who need to understand the system. Last updated May 2026.
+
+### System Overview
+
+GrabIT is a Cameroonian escrow-secured marketplace. When a buyer pays for a product, the money is held in escrow until the buyer confirms they have received their order. Only then is the vendor and delivery agent paid. This escrow model is the core business logic of the platform.
+
+The backend is responsible for all user authentication, all business logic (orders, payments, escrow, disputes), serving data to the frontend via a REST API, and enforcing who can see or change what.
+
+The system is split into three separate services that work together:
+
+```
+┌─────────────────────┐        ┌──────────────────────┐        ┌────────────────────┐
+│                     │        │                       │        │                    │
+│   FRONTEND          │  HTTP  │   DJANGO API          │  SQL   │   POSTGRESQL DB    │
+│   React App         │◄──────►│   Railway             │◄──────►│   Supabase         │
+│   Cloudflare Pages  │        │   (Python server)     │        │   (cloud database) │
+│                     │        │                       │        │                    │
+└─────────────────────┘        └──────────────────────┘        └────────────────────┘
+     grabit.sale                web-production-fcb36              xtshkfyzmsjlojegqyin
+                                   .up.railway.app                  .supabase.co
+```
+
+**In plain English:** The frontend is the visual interface users see. Django is the brain — it receives requests, applies business rules, and returns data. Supabase hosts the actual database where all data is stored permanently.
+
+### Three-Layer Architecture
+
+Each service has a different job and different scaling needs:
+
+| Service | Job | Hosted On | Technology |
+|---|---|---|---|
+| **Frontend** | What users see and interact with | Cloudflare Pages | React + TypeScript |
+| **API Server** | Business logic, authentication, data processing | Railway | Django (Python) |
+| **Database** | Permanent data storage | Supabase | PostgreSQL |
+
+Separating them means you can update, scale, or replace any one layer without touching the others.
+
+### Layer 1 — Django on Railway
+
+**Django** is a web framework written in Python. A framework is a pre-built toolkit that handles common, repetitive parts of building a web server — URL routing, database connections, user sessions, and input validation — so developers can focus on business logic instead of reinventing the wheel. GrabIT uses Django 4.2, a Long-Term Support (LTS) release.
+
+**Django REST Framework (DRF)** extends Django to serve JSON data instead of HTML pages. Every endpoint at `/api/v1/...` is built with DRF.
+
+**Railway** is a cloud hosting platform. Think of it as a computer in the cloud that runs the Django server 24/7. When you push code to GitHub, Railway automatically detects the change, rebuilds the application, and deploys it. No manual server management required. It also generates a public HTTPS URL instantly with usage-based pricing.
+
+**How Railway starts the server — every deploy runs:**
+
+```bash
+python manage.py migrate --noinput && gunicorn config.wsgi --log-file -
+```
+
+1. `migrate --noinput` — applies any pending database schema changes
+2. `gunicorn config.wsgi` — starts the production web server
+
+**Gunicorn** (Green Unicorn) is a production-grade WSGI server. Django's built-in dev server (`runserver`) can only handle one request at a time and is not safe for production. Gunicorn runs multiple worker processes to handle concurrent requests. WSGI (Web Server Gateway Interface) is the standard protocol that connects Python web applications to the internet.
+
+**Whitenoise** allows Django to serve its own compressed static files efficiently, without needing a separate web server like Nginx. It is added to Django's middleware stack in `production.py`.
+
+**SSL / HTTPS:** Railway terminates HTTPS at the proxy level and forwards plain HTTP internally. Django's `SECURE_SSL_REDIRECT` is set to `False` to prevent an infinite redirect loop. `SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')` is set so Django still recognises requests as secure and keeps `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` functioning correctly.
+
+### Layer 2 — PostgreSQL on Supabase
+
+**PostgreSQL** (often called "Postgres") is the world's most advanced open-source relational database. A relational database stores data in tables with rows and columns, and tables can be linked through relationships. GrabIT requires PostgreSQL for:
+
+- **ACID compliance** — every financial transaction is guaranteed to complete fully or not at all. No partial writes that could corrupt escrow balances.
+- **Relational data model** — orders link to buyers, vendors, agents, and payments in a web of relationships.
+- **Row-Level Security (RLS)** — PostgreSQL can restrict which rows a user can see at the database level, not just the application level.
+
+**Supabase** is a cloud platform that hosts PostgreSQL databases and wraps them with useful tools — a visual dashboard, backups, and RLS support. Django connects directly to the PostgreSQL database using standard connection strings, not Supabase's JavaScript client library.
+
+**Two connection modes:**
+
+| Mode | Port | Used For | Variable |
+|---|---|---|---|
+| Transaction Pooler | 6543 | All live app queries | `SUPABASE_TRANSACTION_URI` |
+| Direct connection | 5432 | Database migrations only | `SUPABASE_DIRECT_URI` |
+
+The transaction pooler manages a shared pool of database connections that are reused across requests — more efficient for a live application receiving many requests. The direct connection is required when running `manage.py migrate`, which needs full PostgreSQL feature support that pooled connections do not always provide.
+
+**Row Level Security (RLS)** is currently disabled on all tables during the testing phase. Django is the only service accessing the database and enforces its own access controls through DRF permissions. RLS will be enabled with proper policies before the production launch.
+
+### Layer 3 — Frontend on Cloudflare Pages
+
+The frontend is a separate repository. Key facts for backend developers:
+
+- Hosted on **Cloudflare Pages** at `grabit.sale`
+- Communicates with Django via the `VITE_API_URL` environment variable
+- All authenticated API requests must include `Authorization: Token <token>` — note `Token`, not `Bearer`
+- CORS in Django (`CORS_ALLOWED_ORIGINS`) is configured to allow requests from the frontend's domain
+
+### Python Packages Explained
+
+All packages are listed in `requirements.txt`.
+
+#### Core Framework
+
+| Package | What it does |
+|---|---|
+| `Django >=4.2,<5.0` | The web framework. Handles URL routing, database ORM, admin panel, authentication, and the request/response cycle. |
+| `djangorestframework >=3.15` | Extends Django to build REST APIs. Provides serialisers (data validation + formatting), viewsets, authentication classes, and permission classes. |
+
+#### API Features
+
+| Package | What it does |
+|---|---|
+| `django-cors-headers >=4.3` | Handles CORS — allows the browser to make requests to the API from a different domain (e.g. `grabit.sale` calling `railway.app`). Without this, browsers block all cross-origin requests. |
+| `django-filter >=24.0` | Adds querystring filtering to API endpoints. Powers `GET /products/?category=electronics&city=Yaoundé`. |
+| `drf-spectacular >=0.27` | Auto-generates OpenAPI 3.0 documentation from code. Powers the Swagger UI at `/api/docs/` — write the code and the docs are generated automatically. |
+
+#### Database
+
+| Package | What it does |
+|---|---|
+| `psycopg2-binary >=2.9` | Python adapter for PostgreSQL. The driver that allows Django to talk to Supabase. The `-binary` variant includes pre-compiled C extensions so no compilation is needed during deployment. |
+| `dj-database-url >=2.0,<3.0` | Parses a `postgresql://user:pass@host:port/db` URI into the dictionary format Django's `DATABASES` setting requires. Makes it easy to configure the database from a single environment variable. |
+
+#### Configuration & Server
+
+| Package | What it does |
+|---|---|
+| `python-decouple >=3.8` | Reads configuration values from environment variables or a `.env` file. Every `config("VARIABLE_NAME")` call in the settings files uses this package. |
+| `gunicorn >=22.0` | Production WSGI server. Runs multiple worker processes to handle concurrent requests. Railway uses this to serve the Django application. |
+| `whitenoise >=6.7` | Serves Django's static files efficiently in production without a separate web server. Compresses files and adds proper HTTP caching headers. |
+| `Pillow >=10.0` | Python's image processing library. Used for product photos and KYC document uploads — resizing, format conversion, and validation. |
+
+### Settings Architecture
+
+Settings are split across three files in `config/settings/`:
+
+```
+config/settings/
+├── base.py          ← Shared settings for ALL environments
+├── development.py   ← Overrides for local development
+└── production.py    ← Overrides for Railway deployment
+```
+
+**`base.py`** contains everything that is the same in every environment: `INSTALLED_APPS`, `MIDDLEWARE`, `AUTH_USER_MODEL` (pointing to `accounts.User`), `REST_FRAMEWORK` configuration, and `SPECTACULAR_SETTINGS`.
+
+**`development.py`** imports from `base.py` then overrides: `DEBUG=True`, SQLite database (no setup required), and `CORS_ALLOW_ALL_ORIGINS=True` (safe locally, dangerous in production).
+
+**`production.py`** imports from `base.py` then overrides: `DEBUG=False`, Supabase PostgreSQL via `SUPABASE_TRANSACTION_URI`, `CORS_ALLOWED_ORIGINS` restricted to specific frontend domains, Whitenoise for static files, and security headers (`SECURE_BROWSER_XSS_FILTER`, `X_FRAME_OPTIONS`, etc.).
+
+### Django Apps — What Each One Does
+
+| App | Responsibility |
+|---|---|
+| `accounts` | Custom `User` model (with `role`, `phone`, `city`), registration/login, profiles, delivery addresses, admin-only user management and KYC review |
+| `products` | Product catalogue, images, reviews (verified purchase only), wishlist |
+| `shops` | Vendor shops, KYC documents, shop following, subscription plan, shop creation workflow |
+| `orders` | Full order lifecycle, `EscrowEvent` audit trail (every state change logged), in-platform messaging |
+| `payments` | MoMo/Orange Money payment records, vendor and agent payout tracking |
+| `disputes` | Dispute filing, evidence upload, admin resolution with three outcomes |
+| `notifications` | User notification feed, mark-as-read |
+
+**Key business rules:**
+- Prices are stored as integers in XAF francs — no decimal sub-unit
+- A vendor must have an approved KYC before their shop goes active
+- Once an order is paid, funds enter escrow — the vendor cannot be paid until the buyer confirms delivery or an admin resolves a dispute
+- `OrderItem` snapshots the price at purchase time, preserving order history if the vendor later changes their price
+
+**`orders` is the most complex app.** It tracks 8 states: `awaiting_payment → paid_escrow → preparing → agent_assigned → picked_up → in_transit → delivered_confirm → completed`. Every transition is logged to the `EscrowEvent` model.
+
+**`payments`** is currently scaffolded. The actual MTN MoMo and Orange Money API integration is the next development phase.
+
+### Authentication System Deep Dive
+
+GrabIT uses **DRF Token Authentication**. When a user registers or logs in successfully, the API returns a token:
+
+```json
+{
+  "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b",
+  "user": { "id": 1, "email": "user@example.com", "role": "buyer" }
+}
+```
+
+Every subsequent request to a protected endpoint must include:
+
+```
+Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b
+```
+
+> **Frontend note:** The header prefix is `Token`, not `Bearer`. Using `Bearer` returns 401 Unauthorized.
+
+**How Django checks the token on each request:**
+1. DRF extracts the token string from the `Authorization` header
+2. Queries the database: `SELECT * FROM authtoken_token WHERE key = '...'`
+3. If found, loads the associated user and attaches them to `request.user`
+4. The view's permission class checks whether that user has the right role
+
+**Permission levels:**
+
+| Endpoint type | Who can access |
+|---|---|
+| Public (product list, shop detail) | Anyone — no token required |
+| Authenticated (place order, view cart) | Any logged-in user |
+| Vendor endpoints | Users with `role = vendor` |
+| Agent endpoints | Users with `role = agent` |
+| Admin endpoints | Users with `role = admin` |
+
+### How a Request Travels Through the System
+
+Example: a buyer fetching their order list — `GET /api/v1/orders/`
+
+```
+1. Browser/App
+   GET https://web-production-fcb36.up.railway.app/api/v1/orders/
+   Authorization: Token abc123...
+
+2. Railway — terminates SSL, forwards plain HTTP to Gunicorn on port 8000
+
+3. Gunicorn — one worker process picks up the request, passes it to Django WSGI
+
+4. Django Middleware (in order):
+   CorsMiddleware          → checks if origin is in CORS_ALLOWED_ORIGINS
+   SecurityMiddleware      → adds security response headers
+   AuthenticationMiddleware → loads request.user from session
+
+5. URL Router — /api/v1/orders/ → OrderViewSet
+
+6. DRF Authentication — reads token → queries DB → attaches user to request.user
+
+7. DRF Permission Check — is user authenticated? Role match? → granted
+
+8. OrderViewSet.list() — runs Order.objects.filter(buyer=request.user)
+
+9. Django ORM → psycopg2 sends SQL to Supabase (port 6543):
+   SELECT * FROM orders_order WHERE buyer_id = 42
+
+10. Supabase returns rows → ORM converts to Python Order objects
+
+11. OrderSerializer — converts objects to dict, validates field types
+
+12. DRF Response — serializes to JSON, sets HTTP 200 OK
+
+13. Gunicorn → Railway → Browser receives the JSON order list
+```
 
 ---
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - pip
 
 ---
@@ -59,6 +317,8 @@ cd grabit-backend
 
 ### 2. Create and activate a virtual environment
 
+A virtual environment isolates this project's Python packages from your system Python. Always use one.
+
 ```bash
 # Create
 python -m venv venv
@@ -69,6 +329,8 @@ venv\Scripts\activate
 # Activate — macOS / Linux
 source venv/bin/activate
 ```
+
+You will know it is active when you see `(venv)` at the start of your terminal prompt.
 
 ### 3. Install dependencies
 
@@ -85,10 +347,12 @@ cp .env.example .env
 Open `.env` and set at minimum:
 
 ```env
-SECRET_KEY=<generate a new key — see .env.example for the command>
+SECRET_KEY=any-random-string-will-do-for-local-dev
 DEBUG=True
 ALLOWED_HOSTS=localhost,127.0.0.1
 ```
+
+For local development you do not need the Supabase variables — SQLite is used by default.
 
 ### 5. Apply database migrations
 
@@ -104,7 +368,22 @@ python manage.py createsuperuser
 
 Use role `admin` when prompted (or update it via the Django admin panel afterwards).
 
-### 7. Start the development server
+### 7. Load test data
+
+```bash
+python manage.py seed_data
+```
+
+This creates sample users, shops, products, and orders so you have realistic data to work with immediately. After seeding, the following test accounts are available — all use the password `Grabit2024!`:
+
+| Role | Email | What you can test |
+|---|---|---|
+| Admin | admin@grabit.sale | Full platform access, dispute resolution, KYC approval |
+| Vendor | (see seed_data output) | Shop management, product listing, order fulfilment |
+| Buyer | (see seed_data output) | Browsing, ordering, dispute filing |
+| Agent | (see seed_data output) | Delivery assignment and status updates |
+
+### 8. Start the development server
 
 ```bash
 python manage.py runserver
@@ -119,9 +398,9 @@ The API is now available at **http://localhost:8000**
 | http://localhost:8000/api/redoc/ | ReDoc (alternative docs) |
 | http://localhost:8000/admin/ | Django admin panel |
 
-### 8. Connect the frontend
+### 9. Connect the frontend
 
-In the GrabIT React app (`grabit/`), create `.env.local`:
+In the GrabIT React app, create `.env.local`:
 
 ```env
 VITE_API_URL=http://localhost:8000/api/v1
@@ -137,7 +416,7 @@ grabit-backend/
 │   ├── settings/
 │   │   ├── base.py          # Shared settings (all environments)
 │   │   ├── development.py   # Dev overrides (SQLite, permissive CORS)
-│   │   └── production.py    # Prod overrides (PostgreSQL, Whitenoise)
+│   │   └── production.py    # Prod overrides (Supabase, Whitenoise)
 │   ├── urls.py              # Root URL routing + API docs
 │   ├── wsgi.py
 │   └── asgi.py
@@ -514,26 +793,47 @@ An admin then resolves it via `PATCH /disputes/<id>/resolve/` with `resolution: 
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SECRET_KEY` | Yes | — | Django secret key |
-| `DEBUG` | No | `False` | Enable debug mode |
-| `ALLOWED_HOSTS` | Yes | — | Comma-separated hostnames |
-| `CORS_ALLOWED_ORIGINS` | Prod | — | Comma-separated frontend origins |
-| `DB_NAME` | Prod | — | PostgreSQL database name |
-| `DB_USER` | Prod | — | PostgreSQL user |
-| `DB_PASSWORD` | Prod | — | PostgreSQL password |
-| `DB_HOST` | Prod | `localhost` | PostgreSQL host |
-| `DB_PORT` | Prod | `5432` | PostgreSQL port |
-| `EMAIL_HOST` | Prod | `smtp.sendgrid.net` | SMTP host |
-| `EMAIL_HOST_USER` | Prod | — | SMTP username |
-| `EMAIL_HOST_PASSWORD` | Prod | — | SMTP password |
-| `SECURE_SSL_REDIRECT` | Prod | `True` | Force HTTPS |
+Environment variables are stored outside the codebase — never committed to Git. They live in a `.env` file locally and in Railway's Variables panel in production. See `.env.example` for the full template.
 
-Set production settings by exporting:
-```bash
-export DJANGO_SETTINGS_MODULE=config.settings.production
-```
+### Django Core
+
+| Variable | Required | Description |
+|---|---|---|
+| `SECRET_KEY` | Always | Long random string used to sign cookies, session tokens, CSRF tokens, and password reset links. Generate with: `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"` |
+| `DEBUG` | Always | `True` locally, must be `False` on Railway. When `True`, Django shows stack traces on error pages. |
+| `ALLOWED_HOSTS` | Always | Comma-separated hostnames Django will respond to (e.g. `localhost,127.0.0.1,web-production-fcb36.up.railway.app`). |
+| `DJANGO_SETTINGS_MODULE` | Production | Set to `config.settings.production` on Railway. Defaults to `development` locally. |
+
+### CORS
+
+| Variable | Required | Description |
+|---|---|---|
+| `CORS_ALLOWED_ORIGINS` | Production | Comma-separated frontend origins allowed to make cross-origin requests (e.g. `https://grabit.sale,https://grabit.pages.dev`). |
+
+### Supabase Database
+
+| Variable | Required | Description |
+|---|---|---|
+| `SUPABASE_TRANSACTION_URI` | Production | Main database connection string (port 6543). Used for all live queries. |
+| `SUPABASE_DIRECT_URI` | Production | Session-mode connection string (port 5432). Used only when running `manage.py migrate`. |
+
+### Supabase API
+
+| Variable | Required | Description |
+|---|---|---|
+| `SUPABASE_URL` | Optional | The Supabase project's REST API URL. Not required for database queries — those use the connection strings above. |
+| `SUPABASE_ANON_KEY` | Optional | Public "anonymous" JWT key. Safe to expose in frontend code. Grants limited access per RLS policies. |
+| `SUPABASE_SERVICE_KEY` | Optional | Secret service role JWT key. Bypasses all RLS. **Never expose in frontend code** — treat like a database root password. |
+
+### Email (production SMTP)
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMAIL_HOST` | `smtp.sendgrid.net` | SMTP server hostname |
+| `EMAIL_PORT` | `587` | SMTP port |
+| `EMAIL_HOST_USER` | — | SMTP username / API key identifier |
+| `EMAIL_HOST_PASSWORD` | — | SMTP password or API key |
+| `DEFAULT_FROM_EMAIL` | `noreply@grabit.sale` | Sender address for all outgoing email |
 
 ---
 
@@ -549,22 +849,102 @@ Each app has a `tests.py` stub. Expand these with unit tests for models and inte
 
 ## Deployment
 
-### Checklist before going live
+### How code gets to production
 
-- [ ] Set `DJANGO_SETTINGS_MODULE=config.settings.production`
-- [ ] Generate a strong `SECRET_KEY`
-- [ ] Set `DEBUG=False`
-- [ ] Restrict `ALLOWED_HOSTS` to your domain
-- [ ] Switch database to PostgreSQL
-- [ ] Run `python manage.py collectstatic`
-- [ ] Configure SMTP for transactional email
-- [ ] Set up cloud storage (S3 / Cloudinary) for media files
-- [ ] Integrate real MTN MoMo / Orange Money SDK in `payments/views.py`
-- [ ] Put gunicorn behind nginx or a PaaS (Railway, Render, etc.)
-
-### Running with Gunicorn
-
-```bash
-DJANGO_SETTINGS_MODULE=config.settings.production \
-gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
 ```
+Developer Machine
+      │
+      │  git push origin main
+      │
+      ▼
+GitHub Repository
+      │
+      │  Railway webhook fires automatically
+      │
+      ▼
+Railway Build Process
+      │  1. Detects Python project (via requirements.txt)
+      │  2. Creates virtual environment
+      │  3. pip install -r requirements.txt
+      │  4. python manage.py collectstatic --noinput
+      │
+      ▼
+Railway Deploy Process
+      │  5. python manage.py migrate --noinput
+      │  6. gunicorn config.wsgi --log-file -
+      │
+      ▼
+Live at: https://web-production-fcb36.up.railway.app
+```
+
+### Environment variables on Railway
+
+All secrets are stored in Railway's Variables panel, not in the codebase. To add or change a variable:
+
+1. Go to [railway.app](https://railway.app) and open the `grabit-backend` project
+2. Click the service → **Variables** tab
+3. Add or edit variables
+4. Railway will automatically redeploy with the new values
+
+### Deployment checklist
+
+Before every production deployment, confirm:
+
+- [ ] `DJANGO_SETTINGS_MODULE=config.settings.production` is set in Railway variables
+- [ ] `DEBUG=False` is set in Railway variables
+- [ ] `SECRET_KEY` is a strong, unique key (not the development placeholder)
+- [ ] `ALLOWED_HOSTS` includes the Railway domain
+- [ ] `CORS_ALLOWED_ORIGINS` includes the correct frontend URL
+- [ ] `SUPABASE_TRANSACTION_URI` and `SUPABASE_DIRECT_URI` are valid and use the correct database user
+- [ ] Configure SMTP variables for transactional email
+- [ ] Integrate real MTN MoMo / Orange Money SDK in `payments/views.py`
+- [ ] Set up cloud storage (S3 / Cloudinary) for media files if needed
+
+---
+
+## Live URLs
+
+| Resource | URL |
+|---|---|
+| **Live API** | `https://web-production-fcb36.up.railway.app/api/v1/` |
+| **API Documentation (Swagger)** | `https://web-production-fcb36.up.railway.app/api/docs/` |
+| **API Documentation (ReDoc)** | `https://web-production-fcb36.up.railway.app/api/redoc/` |
+| **Django Admin Panel** | `https://web-production-fcb36.up.railway.app/admin/` |
+| **Supabase Dashboard** | `https://supabase.com/dashboard/project/xtshkfyzmsjlojegqyin` |
+| **Railway Dashboard** | `https://railway.app` |
+| **Frontend (Live)** | `https://grabit.sale` |
+
+---
+
+## Glossary
+
+| Term | Definition |
+|---|---|
+| **API** | Application Programming Interface. A set of rules that allows two software systems to communicate. The Django API receives requests from the frontend and returns data. |
+| **REST API** | A type of API that uses standard HTTP methods (GET, POST, PATCH, DELETE) and returns JSON. GrabIT's API is REST-based. |
+| **JSON** | JavaScript Object Notation. A lightweight data format used to send structured data between the server and frontend. |
+| **Endpoint** | A specific URL in the API that performs a specific action. For example, `POST /api/v1/auth/login/` is the login endpoint. |
+| **HTTP Method** | The verb of an API request. `GET` fetches data, `POST` creates data, `PATCH` updates data, `DELETE` removes data. |
+| **Token** | A random string that proves a user is authenticated. Sent in the `Authorization` header of every protected request. |
+| **Middleware** | Code that runs on every request before it reaches the view. Used for CORS, security headers, and authentication. |
+| **Migration** | A database schema change (adding a table, column, etc.) stored as a Python file. `manage.py migrate` applies pending migrations to the database. |
+| **ORM** | Object Relational Mapper. Django's ORM lets you write Python like `Order.objects.filter(status='pending')` instead of raw SQL. |
+| **Serialiser** | A DRF component that converts Python objects to JSON (for responses) and validates incoming JSON (for requests). |
+| **CORS** | Cross-Origin Resource Sharing. A browser security mechanism that blocks requests to a different domain unless the server explicitly allows it. |
+| **Escrow** | A financial arrangement where funds are held by a neutral third party until conditions are met. In GrabIT, the platform holds the buyer's payment until delivery is confirmed. |
+| **WSGI** | Web Server Gateway Interface. The standard interface between Python web apps and web servers like Gunicorn. |
+| **Virtual Environment** | An isolated Python installation for a specific project. Prevents package conflicts between different projects on the same machine. |
+| **PostgreSQL** | An open-source relational database. The database system GrabIT uses in production. |
+| **Supabase** | A cloud platform that hosts PostgreSQL databases with extra tooling (dashboard, auth, storage, realtime). GrabIT's database provider. |
+| **Railway** | A cloud platform for deploying web applications. GrabIT's backend hosting provider. |
+| **Gunicorn** | A Python WSGI HTTP server for production. Handles multiple concurrent requests by running multiple worker processes. |
+| **Whitenoise** | A Python library that lets Django serve its own static files efficiently in production. |
+| **RLS** | Row Level Security. A PostgreSQL feature that restricts which database rows a user can see, enforced at the database level. |
+| **XAF** | Central African CFA franc. The currency of Cameroon. All monetary values in GrabIT are stored as integers in XAF. |
+| **KYC** | Know Your Customer. The process of verifying a user's identity. GrabIT requires vendors and delivery agents to submit identity documents before being approved. |
+| **`manage.py`** | Django's command-line utility. Used for running migrations, starting the dev server, creating users, and running management commands. |
+| **`requirements.txt`** | A text file listing all Python packages the project depends on. `pip install -r requirements.txt` installs all of them. |
+
+---
+
+*GrabIT · grabit.sale · Internal Team Documentation · May 2026*
