@@ -3,7 +3,7 @@ Production settings — PostgreSQL, locked-down CORS, Whitenoise for static file
 """
 from .base import *  # noqa: F401, F403
 import dj_database_url
-from decouple import config, Csv
+from decouple import config
 
 DEBUG = False
 
@@ -22,7 +22,10 @@ DATABASES = {
     ),
 }
 
-CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", cast=Csv())
+CORS_ALLOWED_ORIGINS = [
+    "https://grabit.sale",
+    "https://grab-it.ndifonlemuel.workers.dev",
+]
 
 # Whitenoise serves compressed static files without a CDN
 MIDDLEWARE = [
