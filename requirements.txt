@@ -18,5 +18,5 @@ gunicorn>=22.0                # WSGI server for production deployment
 whitenoise>=6.7               # serves compressed static files without a CDN
 
 # ── Production Database ───────────────────────────────────────────────────────
-# Uncomment when switching from SQLite to PostgreSQL
-# psycopg2-binary>=2.9
+psycopg2-binary>=2.9          # PostgreSQL adapter (pre-built binary, no pg_config needed)
+dj-database-url>=2.0,<3.0     # parse DATABASE_URL env var into Django DATABASES dict (3.x requires Python 3.9+)

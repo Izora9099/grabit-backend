@@ -2,8 +2,9 @@
 Seed the database with realistic test data for local development.
 
 Usage:
-    python manage.py seed_data           # add data (safe to run on empty DB)
-    python manage.py seed_data --clear   # wipe everything first, then seed
+    python manage.py seed_data                      # add data (safe to run on empty DB)
+    python manage.py seed_data --clear              # wipe everything first, then seed
+    python manage.py seed_data --database=direct    # target a specific DB alias
 """
 import datetime
 
@@ -37,8 +38,15 @@ class Command(BaseCommand):
             action="store_true",
             help="Delete all existing data before seeding",
         )
+        parser.add_argument(
+            "--database",
+            default="default",
+            help="Database alias to seed (default: 'default')",
+        )
 
     def handle(self, *args, **options):
+        self._db = options["database"]
+
         if options["clear"]:
             self._clear()
 
@@ -90,23 +98,23 @@ class Command(BaseCommand):
 
     def _clear(self):
         self.stdout.write(self.style.WARNING("Clearing all data..."))
-        Notification.objects.all().delete()
-        WishlistItem.objects.all().delete()
-        ShopFollow.objects.all().delete()
-        Payout.objects.all().delete()
-        Message.objects.all().delete()
-        Dispute.objects.all().delete()
-        Review.objects.all().delete()
-        EscrowEvent.objects.all().delete()
-        Payment.objects.all().delete()
-        OrderItem.objects.all().delete()
-        Order.objects.all().delete()
-        KYCDocument.objects.all().delete()
-        Product.objects.all().delete()
-        Shop.objects.all().delete()
-        Address.objects.all().delete()
-        Token.objects.all().delete()
-        User.objects.all().delete()
+        Notification.objects.using(self._db).all().delete()
+        WishlistItem.objects.using(self._db).all().delete()
+        ShopFollow.objects.using(self._db).all().delete()
+        Payout.objects.using(self._db).all().delete()
+        Message.objects.using(self._db).all().delete()
+        Dispute.objects.using(self._db).all().delete()
+        Review.objects.using(self._db).all().delete()
+        EscrowEvent.objects.using(self._db).all().delete()
+        Payment.objects.using(self._db).all().delete()
+        OrderItem.objects.using(self._db).all().delete()
+        Order.objects.using(self._db).all().delete()
+        KYCDocument.objects.using(self._db).all().delete()
+        Product.objects.using(self._db).all().delete()
+        Shop.objects.using(self._db).all().delete()
+        Address.objects.using(self._db).all().delete()
+        Token.objects.using(self._db).all().delete()
+        User.objects.using(self._db).all().delete()
         self.stdout.write(self.style.WARNING("Done clearing.\n"))
 
     # -------------------------------------------------------------------------
@@ -129,8 +137,8 @@ class Command(BaseCommand):
             is_superuser=superuser,
             is_active=True,
         )
-        u.save()
-        Token.objects.get_or_create(user=u)
+        u.save(using=self._db)
+        Token.objects.using(self._db).get_or_create(user=u)
         return u
 
     def _users(self):
@@ -152,11 +160,11 @@ class Command(BaseCommand):
         diane    = self._make_user("diane.fokam@grabit.cm",    "Diane",    "Fokam",   "agent",  "+237 691 700 002", "Yaoundé", kyc=True)
         felix    = self._make_user("felix.awah@grabit.cm",     "Felix",    "Awah",    "agent",  "+237 652 700 003", "Buea")
 
-        Address.objects.create(user=amina,  label="Home",   line="Rue Njo Njo, Akwa",                city="Douala",  is_primary=True)
-        Address.objects.create(user=amina,  label="Office", line="Immeuble Wouri, Bonapriso",        city="Douala",  is_primary=False)
-        Address.objects.create(user=paul,   label="Home",   line="Quartier Bastos, Av. Foch",        city="Yaoundé", is_primary=True)
-        Address.objects.create(user=claire, label="Home",   line="Mile 17, Bonduma",                 city="Buea",    is_primary=True)
-        Address.objects.create(user=boris,  label="Home",   line="Quartier Logbaba, Douala IV",      city="Douala",  is_primary=True)
+        Address.objects.using(self._db).create(user=amina,  label="Home",   line="Rue Njo Njo, Akwa",                city="Douala",  is_primary=True)
+        Address.objects.using(self._db).create(user=amina,  label="Office", line="Immeuble Wouri, Bonapriso",        city="Douala",  is_primary=False)
+        Address.objects.using(self._db).create(user=paul,   label="Home",   line="Quartier Bastos, Av. Foch",        city="Yaoundé", is_primary=True)
+        Address.objects.using(self._db).create(user=claire, label="Home",   line="Mile 17, Bonduma",                 city="Buea",    is_primary=True)
+        Address.objects.using(self._db).create(user=boris,  label="Home",   line="Quartier Logbaba, Douala IV",      city="Douala",  is_primary=True)
 
         return dict(
             admin=admin, amina=amina, paul=paul, claire=claire, boris=boris,
@@ -172,7 +180,7 @@ class Command(BaseCommand):
     def _mk_shop(self, owner, name, handle, tagline, desc, cat, city, nbhd,
                  whatsapp, email, fee, threshold, return_policy, processing_time,
                  plan, status, verified, followers, rating, reviews_count, response_time):
-        return Shop.objects.create(
+        return Shop.objects.using(self._db).create(
             owner=owner, name=name, handle=handle, tagline=tagline,
             description=desc, category=cat, city=city, neighbourhood=nbhd,
             whatsapp=whatsapp, email=email,
@@ -311,7 +319,7 @@ class Command(BaseCommand):
             (s["nightglow"],    "identity", "National ID Card",                    "rejected"),
         ]
         for shop, doc_type, label, status in docs:
-            KYCDocument.objects.create(
+            KYCDocument.objects.using(self._db).create(
                 shop=shop, doc_type=doc_type, label=label, status=status
             )
 
@@ -321,7 +329,7 @@ class Command(BaseCommand):
 
     def _mk_product(self, shop, name, desc, price, cat, cond, stock, status,
                     premium=False, rating="0.00", reviews_count=0, views=0, sales=0):
-        return Product.objects.create(
+        return Product.objects.using(self._db).create(
             shop=shop, name=name, description=desc, price=price,
             category=cat, condition=cond, stock=stock, status=status,
             is_premium=premium, rating=rating,
@@ -461,13 +469,13 @@ class Command(BaseCommand):
             status=status, city=city, delivery_address=address,
             total=total, escrow_released=escrow_released,
         )
-        o.save()
+        o.save(using=self._db)
         for product, qty in items:
-            OrderItem.objects.create(
+            OrderItem.objects.using(self._db).create(
                 order=o, product=product,
                 quantity=qty, unit_price=product.price,
             )
-        Order.objects.filter(pk=o.pk).update(placed_at=_ago(placed_days_ago))
+        Order.objects.using(self._db).filter(pk=o.pk).update(placed_at=_ago(placed_days_ago))
         return o
 
     def _orders(self, u, s, p):
@@ -556,21 +564,21 @@ class Command(BaseCommand):
     # -------------------------------------------------------------------------
 
     def _payments(self, o):
-        Payment.objects.create(payment_id="PAY-1000", order=o["o1"],  method="mtn_momo",     amount=26000,  phone_number="+237 677 123 456", status="paid",     external_ref="MTN-20260410-001")
-        Payment.objects.create(payment_id="PAY-1001", order=o["o2"],  method="orange_money", amount=20500,  phone_number="+237 677 123 456", status="paid",     external_ref="OM-20260520-002")
-        Payment.objects.create(payment_id="PAY-1002", order=o["o3"],  method="mtn_momo",     amount=12500,  phone_number="+237 691 234 567", status="paid",     external_ref="MTN-20260521-003")
-        Payment.objects.create(payment_id="PAY-1003", order=o["o4"],  method="mtn_momo",     amount=46500,  phone_number="+237 652 345 678", status="paid",     external_ref="MTN-20260522-004")
+        Payment.objects.using(self._db).create(payment_id="PAY-1000", order=o["o1"],  method="mtn_momo",     amount=26000,  phone_number="+237 677 123 456", status="paid",     external_ref="MTN-20260410-001")
+        Payment.objects.using(self._db).create(payment_id="PAY-1001", order=o["o2"],  method="orange_money", amount=20500,  phone_number="+237 677 123 456", status="paid",     external_ref="OM-20260520-002")
+        Payment.objects.using(self._db).create(payment_id="PAY-1002", order=o["o3"],  method="mtn_momo",     amount=12500,  phone_number="+237 691 234 567", status="paid",     external_ref="MTN-20260521-003")
+        Payment.objects.using(self._db).create(payment_id="PAY-1003", order=o["o4"],  method="mtn_momo",     amount=46500,  phone_number="+237 652 345 678", status="paid",     external_ref="MTN-20260522-004")
         # GR-10005: failed payment — buyer tried MTN MoMo, insufficient funds
-        Payment.objects.create(payment_id="PAY-1004", order=o["o5"],  method="mtn_momo",     amount=200000, phone_number="+237 691 234 567", status="failed",   external_ref="MTN-FAILED-20260522")
-        Payment.objects.create(payment_id="PAY-1005", order=o["o6"],  method="orange_money", amount=37000,  phone_number="+237 677 123 456", status="paid",     external_ref="OM-20260521-005")
-        Payment.objects.create(payment_id="PAY-1006", order=o["o7"],  method="bank_transfer", amount=80500, phone_number="",                 status="paid",     external_ref="BANK-20260518-006")
+        Payment.objects.using(self._db).create(payment_id="PAY-1004", order=o["o5"],  method="mtn_momo",     amount=200000, phone_number="+237 691 234 567", status="failed",   external_ref="MTN-FAILED-20260522")
+        Payment.objects.using(self._db).create(payment_id="PAY-1005", order=o["o6"],  method="orange_money", amount=37000,  phone_number="+237 677 123 456", status="paid",     external_ref="OM-20260521-005")
+        Payment.objects.using(self._db).create(payment_id="PAY-1006", order=o["o7"],  method="bank_transfer", amount=80500, phone_number="",                 status="paid",     external_ref="BANK-20260518-006")
         # GR-10008: cancelled order — payment refunded
-        Payment.objects.create(payment_id="PAY-1007", order=o["o8"],  method="mtn_momo",     amount=79500,  phone_number="+237 677 456 789", status="refunded", external_ref="MTN-REFUND-20260519")
-        Payment.objects.create(payment_id="PAY-1008", order=o["o9"],  method="orange_money", amount=19500,  phone_number="+237 677 123 456", status="paid",     external_ref="OM-20260522-007")
-        Payment.objects.create(payment_id="PAY-1009", order=o["o10"], method="mtn_momo",     amount=26000,  phone_number="+237 691 234 567", status="paid",     external_ref="MTN-20260408-008")
-        Payment.objects.create(payment_id="PAY-1010", order=o["o11"], method="orange_money", amount=23000,  phone_number="+237 652 345 678", status="paid",     external_ref="OM-20260503-009")
+        Payment.objects.using(self._db).create(payment_id="PAY-1007", order=o["o8"],  method="mtn_momo",     amount=79500,  phone_number="+237 677 456 789", status="refunded", external_ref="MTN-REFUND-20260519")
+        Payment.objects.using(self._db).create(payment_id="PAY-1008", order=o["o9"],  method="orange_money", amount=19500,  phone_number="+237 677 123 456", status="paid",     external_ref="OM-20260522-007")
+        Payment.objects.using(self._db).create(payment_id="PAY-1009", order=o["o10"], method="mtn_momo",     amount=26000,  phone_number="+237 691 234 567", status="paid",     external_ref="MTN-20260408-008")
+        Payment.objects.using(self._db).create(payment_id="PAY-1010", order=o["o11"], method="orange_money", amount=23000,  phone_number="+237 652 345 678", status="paid",     external_ref="OM-20260503-009")
         # GR-10012: resolved dispute — payment partially refunded
-        Payment.objects.create(payment_id="PAY-1011", order=o["o12"], method="mtn_momo",     amount=91000,  phone_number="+237 691 234 567", status="refunded", external_ref="MTN-PARTIAL-20260508")
+        Payment.objects.using(self._db).create(payment_id="PAY-1011", order=o["o12"], method="mtn_momo",     amount=91000,  phone_number="+237 691 234 567", status="refunded", external_ref="MTN-PARTIAL-20260508")
 
     # -------------------------------------------------------------------------
     # escrow events
@@ -608,7 +616,7 @@ class Command(BaseCommand):
             (o["o12"], "released",      45500, "Remaining 50% released to EcoCharge after partial refund"),
         ]
         for order, event, amount, note in ev:
-            EscrowEvent.objects.create(order=order, event=event, amount=amount, note=note)
+            EscrowEvent.objects.using(self._db).create(order=order, event=event, amount=amount, note=note)
 
     # -------------------------------------------------------------------------
     # reviews
@@ -632,7 +640,7 @@ class Command(BaseCommand):
             (p["mountain_bike"],u["paul"],  3, "The bike itself is decent but arrived with a bent derailleur. Assembly instructions are in Chinese only. Had to pay a local mechanic. Vendor response was very slow.", True),
         ]
         for product, buyer, rating, text, verified in reviews:
-            Review.objects.create(
+            Review.objects.using(self._db).create(
                 product=product, buyer=buyer, rating=rating,
                 text=text, is_verified_purchase=verified,
             )
@@ -656,8 +664,8 @@ class Command(BaseCommand):
             ),
             status="in_review",
         )
-        d1.save()
-        Dispute.objects.filter(pk=d1.pk).update(created_at=_ago(3))
+        d1.save(using=self._db)
+        Dispute.objects.using(self._db).filter(pk=d1.pk).update(created_at=_ago(3))
 
         # DSP-301  Paul vs EcoCharge — damaged on arrival — RESOLVED (partial_refund)
         d2 = Dispute(
@@ -680,8 +688,8 @@ class Command(BaseCommand):
                 "(45,500 XAF) to buyer; 50% released to vendor. Both parties notified. Case closed."
             ),
         )
-        d2.save()
-        Dispute.objects.filter(pk=d2.pk).update(
+        d2.save(using=self._db)
+        Dispute.objects.using(self._db).filter(pk=d2.pk).update(
             created_at=_ago(12), resolved_at=_ago(8)
         )
 
@@ -719,7 +727,7 @@ class Command(BaseCommand):
             (u["grace"],   u["paul"],     o["o12"], True,  "The admin team has reviewed and issued a partial refund. I'm sorry the panel arrived damaged — I've flagged the transit issue with our courier."),
         ]
         for sender, recipient, order, read, body in threads:
-            Message.objects.create(
+            Message.objects.using(self._db).create(
                 sender=sender, recipient=recipient, order=order,
                 body=body, read=read,
             )
@@ -748,7 +756,7 @@ class Command(BaseCommand):
             ("PO-8", u["ndeh"],    "mtn_momo",     16625,  "paid",       dt.date(2026, 5, 10)),
         ]
         for payout_id, recipient, method, amount, status, payout_date in payouts:
-            Payout.objects.create(
+            Payout.objects.using(self._db).create(
                 payout_id=payout_id, recipient=recipient, method=method,
                 amount=amount, status=status, payout_date=payout_date,
             )
@@ -807,7 +815,7 @@ class Command(BaseCommand):
             (u["admin"],  "system",   "Shop suspended: NightGlow",         "NightGlow Electronics has been suspended following a rejected KYC document submission.",                               "/internal/console-7f3a9b2c4e8d1a6f/shops", True),
         ]
         for user, type_, title, body, href, read in notifs:
-            Notification.objects.create(
+            Notification.objects.using(self._db).create(
                 user=user, type=type_, title=title,
                 body=body, href=href, read=read,
             )
@@ -831,7 +839,7 @@ class Command(BaseCommand):
             (u["boris"],  s["pulsetech"]),
         ]
         for user, shop in follows:
-            ShopFollow.objects.create(user=user, shop=shop)
+            ShopFollow.objects.using(self._db).create(user=user, shop=shop)
 
     # -------------------------------------------------------------------------
     # wishlist
@@ -849,7 +857,7 @@ class Command(BaseCommand):
             (u["boris"],  p["solar_bank"]),
         ]
         for user, product in items:
-            WishlistItem.objects.create(user=user, product=product)
+            WishlistItem.objects.using(self._db).create(user=user, product=product)
 
     # -------------------------------------------------------------------------
     # summary
@@ -868,23 +876,23 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("  GRABIT SEED DATA — COMPLETE"))
         self.stdout.write("=" * 52)
         rows = [
-            ("Users",          User.objects.count()),
-            ("Addresses",      Address.objects.count()),
-            ("Auth Tokens",    Token.objects.count()),
-            ("Shops",          Shop.objects.count()),
-            ("KYC Documents",  KYCDocument.objects.count()),
-            ("Products",       Product.objects.count()),
-            ("Orders",         Order.objects.count()),
-            ("Order Items",    OrderItem.objects.count()),
-            ("Payments",       Payment.objects.count()),
-            ("Escrow Events",  EscrowEvent.objects.count()),
-            ("Reviews",        Review.objects.count()),
-            ("Disputes",       Dispute.objects.count()),
-            ("Messages",       Message.objects.count()),
-            ("Payouts",        Payout.objects.count()),
-            ("Notifications",  Notification.objects.count()),
-            ("Shop Follows",   ShopFollow.objects.count()),
-            ("Wishlist Items", WishlistItem.objects.count()),
+            ("Users",          User.objects.using(self._db).count()),
+            ("Addresses",      Address.objects.using(self._db).count()),
+            ("Auth Tokens",    Token.objects.using(self._db).count()),
+            ("Shops",          Shop.objects.using(self._db).count()),
+            ("KYC Documents",  KYCDocument.objects.using(self._db).count()),
+            ("Products",       Product.objects.using(self._db).count()),
+            ("Orders",         Order.objects.using(self._db).count()),
+            ("Order Items",    OrderItem.objects.using(self._db).count()),
+            ("Payments",       Payment.objects.using(self._db).count()),
+            ("Escrow Events",  EscrowEvent.objects.using(self._db).count()),
+            ("Reviews",        Review.objects.using(self._db).count()),
+            ("Disputes",       Dispute.objects.using(self._db).count()),
+            ("Messages",       Message.objects.using(self._db).count()),
+            ("Payouts",        Payout.objects.using(self._db).count()),
+            ("Notifications",  Notification.objects.using(self._db).count()),
+            ("Shop Follows",   ShopFollow.objects.using(self._db).count()),
+            ("Wishlist Items", WishlistItem.objects.using(self._db).count()),
         ]
         for label, count in rows:
             self.stdout.write(f"  {label:<22} {count}")

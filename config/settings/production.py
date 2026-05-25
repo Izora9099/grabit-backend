@@ -2,6 +2,7 @@
 Production settings — PostgreSQL, locked-down CORS, Whitenoise for static files.
 """
 from .base import *  # noqa: F401, F403
+import dj_database_url
 from decouple import config, Csv
 
 DEBUG = False
@@ -9,14 +10,16 @@ DEBUG = False
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
 
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("DB_NAME"),
-        "USER": config("DB_USER"),
-        "PASSWORD": config("DB_PASSWORD"),
-        "HOST": config("DB_HOST", default="localhost"),
-        "PORT": config("DB_PORT", default="5432"),
-    }
+    # Supabase transaction pooler (port 6543) — used for all live queries
+    "default": dj_database_url.parse(
+        config("SUPABASE_TRANSACTION_URI"),
+        conn_max_age=600,
+    ),
+    # Supabase direct connection (port 5432) — used only for migrations
+    "direct": dj_database_url.parse(
+        config("SUPABASE_DIRECT_URI"),
+        conn_max_age=0,
+    ),
 }
 
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", cast=Csv())
