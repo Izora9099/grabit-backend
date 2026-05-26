@@ -1,4 +1,5 @@
 from rest_framework import generics, status
+from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -60,7 +61,10 @@ class MyShopView(generics.RetrieveUpdateAPIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_object(self):
-        return self.request.user.shop
+        try:
+            return self.request.user.shop
+        except AttributeError:
+            raise NotFound({"detail": "no_shop", "message": "You don't have a shop yet."})
 
     def get_serializer_class(self):
         if self.request.method in ("PUT", "PATCH"):

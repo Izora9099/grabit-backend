@@ -39,7 +39,11 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         fields = ["name", "description", "price", "category", "condition", "stock", "status", "is_premium"]
 
     def create(self, validated_data):
-        shop = self.context["request"].user.shop
+        try:
+            shop = self.context["request"].user.shop
+        except AttributeError:
+            from rest_framework.exceptions import NotFound
+            raise NotFound({"detail": "no_shop", "message": "You don't have a shop yet."})
         return Product.objects.create(shop=shop, **validated_data)
 
 

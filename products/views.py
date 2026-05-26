@@ -1,4 +1,5 @@
 from rest_framework import generics, filters, status
+from rest_framework.exceptions import NotFound
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -50,6 +51,9 @@ class ProductDetailView(generics.RetrieveAPIView):
         return super().retrieve(request, *args, **kwargs)
 
 
+_NO_SHOP = {"detail": "no_shop", "message": "You don't have a shop yet."}
+
+
 class VendorProductListCreateView(generics.ListCreateAPIView):
     """Vendor-only: list & create their own products."""
     def get_serializer_class(self):
@@ -58,14 +62,20 @@ class VendorProductListCreateView(generics.ListCreateAPIView):
         return ProductListSerializer
 
     def get_queryset(self):
-        return Product.objects.filter(shop=self.request.user.shop)
+        try:
+            return Product.objects.filter(shop=self.request.user.shop)
+        except AttributeError:
+            raise NotFound(_NO_SHOP)
 
 
 class VendorProductDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ProductWriteSerializer
 
     def get_queryset(self):
-        return Product.objects.filter(shop=self.request.user.shop)
+        try:
+            return Product.objects.filter(shop=self.request.user.shop)
+        except AttributeError:
+            raise NotFound(_NO_SHOP)
 
 
 class ProductReviewListCreateView(generics.ListCreateAPIView):
@@ -104,7 +114,11 @@ class ProductImageListCreateView(generics.ListCreateAPIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def _get_product(self):
-        return get_object_or_404(Product, pk=self.kwargs["pk"], shop=self.request.user.shop)
+        try:
+            shop = self.request.user.shop
+        except AttributeError:
+            raise NotFound(_NO_SHOP)
+        return get_object_or_404(Product, pk=self.kwargs["pk"], shop=shop)
 
     def get_queryset(self):
         return self._get_product().images.all()
@@ -121,7 +135,11 @@ class ProductImageDetailView(generics.RetrieveUpdateDestroyAPIView):
     lookup_url_kwarg = "img_pk"
 
     def get_queryset(self):
+        try:
+            shop = self.request.user.shop
+        except AttributeError:
+            raise NotFound(_NO_SHOP)
         return ProductImage.objects.filter(
             product_id=self.kwargs["pk"],
-            product__shop=self.request.user.shop,
+            product__shop=shop,
         )
