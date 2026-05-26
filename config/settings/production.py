@@ -53,6 +53,10 @@ AWS_S3_REGION_NAME = config("SUPABASE_STORAGE_REGION", default="auto")
 AWS_S3_FILE_OVERWRITE = False
 AWS_DEFAULT_ACL = "public-read"
 AWS_QUERYSTRING_AUTH = False
+# Override URL generation to use Supabase public object URLs instead of the S3 API endpoint.
+# django-storages builds: https://{custom_domain}/{file_key}, so the path prefix is embedded here.
+# AWS_LOCATION is intentionally NOT set — it would corrupt the S3 key used during upload.
+AWS_S3_CUSTOM_DOMAIN = "xtshkfyzmsjlojegqyin.supabase.co/storage/v1/object/public/grabit-media"
 
 # Email (configure your SMTP provider here)
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
