@@ -3,16 +3,22 @@ from . import views
 from . import admin_views
 
 urlpatterns = [
+    # Auth
     path("register/", views.RegisterView.as_view(), name="register"),
     path("login/", views.LoginView.as_view(), name="login"),
     path("logout/", views.LogoutView.as_view(), name="logout"),
+    path("token/refresh/", views.TokenRefreshView.as_view(), name="token-refresh"),
+    # Google OAuth
+    path("google/", views.GoogleLoginView.as_view(), name="google-login"),
+    path("google/complete/", views.GoogleCompleteView.as_view(), name="google-complete"),
+    # Profile
     path("me/", views.MeView.as_view(), name="me"),
     path("me/change-password/", views.ChangePasswordView.as_view(), name="change-password"),
     path("me/addresses/", views.AddressListCreateView.as_view(), name="addresses"),
     path("me/addresses/<int:pk>/", views.AddressDetailView.as_view(), name="address-detail"),
     path("me/agent-kyc/", views.AgentKYCListCreateView.as_view(), name="agent-kyc"),
     path("me/agent-kyc/<int:pk>/", views.AgentKYCDetailView.as_view(), name="agent-kyc-detail"),
-    # Admin
+    # Admin dashboard
     path("admin/stats/", admin_views.AdminStatsView.as_view(), name="admin-stats"),
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-users"),
     path("admin/users/<int:pk>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),

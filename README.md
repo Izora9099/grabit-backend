@@ -44,7 +44,7 @@ Built with **Django 4.2** + **Django REST Framework**, deployed on **Railway**, 
 |---|---|
 | Framework | Django 4.2 (LTS) |
 | API | Django REST Framework 3.15 |
-| Auth | DRF Token Authentication |
+| Auth | JWT (djangorestframework-simplejwt) — access token in body, refresh in HttpOnly cookie |
 | Filtering | django-filter |
 | API Docs | drf-spectacular (OpenAPI 3 / Swagger) |
 | Images | Pillow |
@@ -147,7 +147,8 @@ The frontend is a separate repository. Key facts for backend developers:
 
 - Hosted on **Cloudflare Pages** at `grabit.sale`
 - Communicates with Django via the `VITE_API_URL` environment variable
-- All authenticated API requests must include `Authorization: Token <token>` — note `Token`, not `Bearer`
+- All authenticated API requests must include `Authorization: Bearer <access-token>` — note `Bearer`, not `Token`
+- The refresh token is delivered as an `HttpOnly` cookie (`grabit_refresh`) — do **not** read or store it in JavaScript
 - CORS in Django (`CORS_ALLOWED_ORIGINS`) is configured to allow requests from the frontend's domain
 
 ### Python Packages Explained
@@ -226,27 +227,55 @@ config/settings/
 
 ### Authentication System Deep Dive
 
-GrabIT uses **DRF Token Authentication**. When a user registers or logs in successfully, the API returns a token:
+GrabIT uses **JWT (JSON Web Token) Authentication** via `djangorestframework-simplejwt`.
+
+#### Login / Register flow
+
+`POST /api/v1/auth/login/` and `POST /api/v1/auth/register/` return a **short-lived access token** (10 minutes) in the JSON body:
 
 ```json
 {
-  "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b",
+  "access": "<access-jwt>",
   "user": { "id": 1, "email": "user@example.com", "role": "buyer" }
 }
 ```
 
-Every subsequent request to a protected endpoint must include:
+A **long-lived refresh token** (7 days) is simultaneously set as an `HttpOnly`, `SameSite=Strict` cookie named `grabit_refresh`. **The refresh token is never in the response body** — keeping it in `localStorage` would expose it to XSS attacks.
+
+#### Sending authenticated requests
+
+Include the access token as a Bearer token in every request to a protected endpoint:
 
 ```
-Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b
+Authorization: Bearer <access-jwt>
 ```
 
-> **Frontend note:** The header prefix is `Token`, not `Bearer`. Using `Bearer` returns 401 Unauthorized.
+> **Frontend note:** The header prefix is `Bearer`, not `Token`.
+
+#### Refreshing the access token
+
+`POST /api/v1/auth/token/refresh/` — no request body needed. The browser automatically sends the `grabit_refresh` cookie. Returns a new access token:
+
+```json
+{ "access": "<new-access-jwt>" }
+```
+
+Token rotation is enabled: each refresh also issues a new refresh cookie and blacklists the old one.
+
+#### Logout
+
+`POST /api/v1/auth/logout/` — blacklists the refresh token and clears the cookie.
+
+#### Google OAuth
+
+`POST /api/v1/auth/google/` — accepts `{ "id_token": "<google-id-token>" }`. Returns the same JWT pair as regular login, plus `"profile_complete": false` for first-time sign-ins (which triggers the `GoogleCompleteForm`).
+
+`POST /api/v1/auth/google/complete/` — for first-time users, submit `role`, `city`, and `phone` to finish the profile.
 
 **How Django checks the token on each request:**
-1. DRF extracts the token string from the `Authorization` header
-2. Queries the database: `SELECT * FROM authtoken_token WHERE key = '...'`
-3. If found, loads the associated user and attaches them to `request.user`
+1. DRF reads the `Authorization: Bearer <jwt>` header
+2. Validates the JWT signature and expiry — no database query needed for access tokens
+3. Attaches the decoded user to `request.user`
 4. The view's permission class checks whether that user has the right role
 
 **Permission levels:**

@@ -58,3 +58,18 @@ class Payout(models.Model):
 
     def __str__(self):
         return self.payout_id
+
+
+class ProcessedWebhook(models.Model):
+    """
+    Idempotency guard for incoming Fapshi webhook events.
+    A row is inserted before processing begins; duplicate transIds are rejected.
+    """
+    trans_id = models.CharField(max_length=200, unique=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["trans_id"])]
+
+    def __str__(self):
+        return self.trans_id

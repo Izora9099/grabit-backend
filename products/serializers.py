@@ -1,12 +1,44 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.storage import default_storage
 from rest_framework import serializers
+
+from core.images import process_image_upload
 from .models import Product, ProductImage, Review, WishlistItem
 from shops.models import Shop
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
+    # Write-only: accept the raw file; we convert it and store the URL ourselves.
+    image_file = serializers.ImageField(write_only=True, required=False)
+
     class Meta:
         model = ProductImage
-        fields = ["id", "image", "is_primary", "order"]
+        fields = ["id", "image", "image_file", "is_primary", "order"]
+        read_only_fields = ["id", "image"]
+
+    def validate_image_file(self, file):
+        if file is None:
+            return file
+        try:
+            return process_image_upload(file)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message)
+
+    def create(self, validated_data):
+        image_file = validated_data.pop("image_file", None)
+        if image_file:
+            path = default_storage.save(f"products/{image_file.name}", image_file)
+            validated_data["image"] = default_storage.url(path)
+        elif not validated_data.get("image"):
+            raise serializers.ValidationError({"image_file": "An image file is required."})
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        image_file = validated_data.pop("image_file", None)
+        if image_file:
+            path = default_storage.save(f"products/{image_file.name}", image_file)
+            validated_data["image"] = default_storage.url(path)
+        return super().update(instance, validated_data)
 
 
 class ProductListSerializer(serializers.ModelSerializer):

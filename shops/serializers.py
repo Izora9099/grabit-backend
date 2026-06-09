@@ -1,4 +1,7 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
+
+from core.images import process_image_upload
 from .models import Shop, ShopFollow, ShopReview, KYCDocument
 
 
@@ -34,6 +37,20 @@ class ShopCreateSerializer(serializers.ModelSerializer):
                   "email", "delivery_fee", "free_shipping_threshold",
                   "return_policy", "processing_time"]
 
+    def _convert_image(self, file):
+        if file is None:
+            return file
+        try:
+            return process_image_upload(file)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message)
+
+    def validate_logo(self, file):
+        return self._convert_image(file)
+
+    def validate_banner(self, file):
+        return self._convert_image(file)
+
     def create(self, validated_data):
         return Shop.objects.create(owner=self.context["request"].user, **validated_data)
 
@@ -52,3 +69,16 @@ class KYCDocumentSerializer(serializers.ModelSerializer):
         model = KYCDocument
         fields = ["id", "doc_type", "label", "file", "status", "reviewed_at", "created_at"]
         read_only_fields = ["id", "status", "reviewed_at", "created_at"]
+
+    def validate_file(self, file):
+        if file is None:
+            return file
+        # Let PDFs through unchanged; convert images to WebP
+        header = file.read(4)
+        file.seek(0)
+        if header == b"%PDF":
+            return file
+        try:
+            return process_image_upload(file)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message)

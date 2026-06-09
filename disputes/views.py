@@ -1,11 +1,15 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.utils import timezone
+
+from core.images import process_image_upload
 from .models import Dispute
 from .serializers import DisputeSerializer, DisputeCreateSerializer
-from orders.models import EscrowEvent
+from orders.models import EscrowEvent, Order
 
 
 class DisputeListCreateView(generics.ListCreateAPIView):
@@ -31,48 +35,58 @@ class DisputeDetailView(generics.RetrieveAPIView):
 
 
 class ResolveDisputeView(APIView):
-    """Admin-only: resolve a dispute."""
+    """Admin-only: resolve a dispute with a row-level lock to prevent concurrent resolution."""
     def patch(self, request, dispute_id):
         if request.user.role != "admin":
             return Response({"detail": "Admin only."}, status=403)
-        dispute = Dispute.objects.get(dispute_id=dispute_id)
         resolution = request.data.get("resolution")
         if resolution not in ("release_vendor", "refund_buyer", "partial_refund"):
             return Response({"detail": "Invalid resolution value."}, status=400)
 
-        dispute.resolution = resolution
-        dispute.admin_note = request.data.get("admin_note", "")
-        dispute.status = "resolved"
-        dispute.resolved_by = request.user
-        dispute.resolved_at = timezone.now()
+        with transaction.atomic():
+            try:
+                dispute = Dispute.objects.select_for_update().get(dispute_id=dispute_id)
+            except Dispute.DoesNotExist:
+                return Response({"detail": "Not found."}, status=404)
 
-        order = dispute.order
-        if resolution == "release_vendor":
-            order.escrow_released = True
-            order.status = "completed"
-            order.save()
-            EscrowEvent.objects.create(
-                order=order, event="released", amount=order.total,
-                note="Released to vendor after dispute resolution.",
-            )
-        elif resolution == "refund_buyer":
-            order.escrow_released = False
-            order.status = "refunded"
-            order.save()
-            EscrowEvent.objects.create(
-                order=order, event="refunded", amount=order.total,
-                note="Full refund issued to buyer after dispute resolution.",
-            )
-        elif resolution == "partial_refund":
-            order.escrow_released = True
-            order.status = "partially_resolved"
-            order.save()
-            EscrowEvent.objects.create(
-                order=order, event="partial_refund", amount=order.total,
-                note=f"Partial refund. Admin note: {dispute.admin_note}",
-            )
+            if dispute.status == "resolved":
+                return Response({"detail": "Dispute already resolved."}, status=400)
 
-        dispute.save()
+            order = Order.objects.select_for_update().get(pk=dispute.order_id)
+
+            dispute.resolution = resolution
+            dispute.admin_note = request.data.get("admin_note", "")
+            dispute.status = "resolved"
+            dispute.resolved_by = request.user
+            dispute.resolved_at = timezone.now()
+
+            if resolution == "release_vendor":
+                order.escrow_released = True
+                order.status = "completed"
+                order.save()
+                EscrowEvent.objects.create(
+                    order=order, event="released", amount=order.total,
+                    note="Released to vendor after dispute resolution.",
+                )
+            elif resolution == "refund_buyer":
+                order.escrow_released = False
+                order.status = "refunded"
+                order.save()
+                EscrowEvent.objects.create(
+                    order=order, event="refunded", amount=order.total,
+                    note="Full refund issued to buyer after dispute resolution.",
+                )
+            elif resolution == "partial_refund":
+                order.escrow_released = True
+                order.status = "partially_resolved"
+                order.save()
+                EscrowEvent.objects.create(
+                    order=order, event="partial_refund", amount=order.total,
+                    note=f"Partial refund. Admin note: {dispute.admin_note}",
+                )
+
+            dispute.save()
+
         return Response(DisputeSerializer(dispute).data)
 
 
@@ -90,6 +104,16 @@ class DisputeEvidenceUploadView(APIView):
         file = request.FILES.get("evidence")
         if not file:
             return Response({"detail": "No file provided."}, status=400)
+
+        # Convert image evidence to WebP; PDFs pass through unchanged
+        header = file.read(4)
+        file.seek(0)
+        if header != b"%PDF":
+            try:
+                file = process_image_upload(file)
+            except DjangoValidationError as exc:
+                return Response({"detail": exc.message}, status=400)
+
         dispute.evidence = file
         dispute.save(update_fields=["evidence"])
         return Response(DisputeSerializer(dispute).data)

@@ -1,4 +1,7 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
 from .models import Order, OrderItem, Message
 from products.models import Product
 
@@ -30,7 +33,13 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class CreateOrderSerializer(serializers.Serializer):
-    """Used by buyers to place an order."""
+    """
+    Used by buyers to place an order.
+
+    Prices are ALWAYS recalculated server-side from the canonical listing price
+    at the moment of order creation — the request body must never influence
+    amount, platform_fee, or seller_amount.
+    """
     shop_id = serializers.IntegerField()
     city = serializers.CharField(max_length=80)
     delivery_address = serializers.CharField()
@@ -48,20 +57,30 @@ class CreateOrderSerializer(serializers.Serializer):
         from shops.models import Shop
         buyer = self.context["request"].user
         shop = Shop.objects.get(id=validated_data["shop_id"])
-        total = 0
+
+        total = Decimal(0)
         order_items = []
         for item in validated_data["items"]:
+            # Server-side: fetch canonical price from DB — ignore any client-supplied price
             product = Product.objects.get(id=item["product_id"])
+            if product.status != "live":
+                raise serializers.ValidationError(
+                    f"Product '{product.name}' is no longer available."
+                )
             qty = int(item["quantity"])
-            unit_price = product.price
+            unit_price = Decimal(product.price)   # canonical price from DB
             total += qty * unit_price
-            order_items.append(OrderItem(product=product, quantity=qty, unit_price=unit_price))
+            order_items.append(OrderItem(product=product, quantity=qty, unit_price=int(unit_price)))
+
+        platform_fee = (total * Decimal("0.05")).quantize(Decimal("1"))
+        seller_amount = total - platform_fee
 
         order = Order.objects.create(
-            buyer=buyer, shop=shop,
+            buyer=buyer,
+            shop=shop,
             city=validated_data["city"],
             delivery_address=validated_data["delivery_address"],
-            total=total,
+            total=int(total),
         )
         for oi in order_items:
             oi.order = order
