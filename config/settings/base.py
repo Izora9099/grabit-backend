@@ -166,6 +166,8 @@ AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 
 # ── Two-Factor Auth ───────────────────────────────────────────────────────────
 TWO_FACTOR_FORCE_OTP_ADMIN = True
+LOGIN_URL = "two_factor:login"
+LOGIN_REDIRECT_URL = "/internal-mgmt/"
 
 # ── Allauth ───────────────────────────────────────────────────────────────────
 ACCOUNT_EMAIL_VERIFICATION = "none"
@@ -186,3 +188,5 @@ SOCIALACCOUNT_PROVIDERS = {
 # ── JWT refresh cookie (shared cookie name used across views) ─────────────────
 JWT_REFRESH_COOKIE_NAME = "grabit_refresh"
 JWT_REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7 days in seconds
+
+

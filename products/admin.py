@@ -14,6 +14,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_filter = ["status", "category", "condition"]
     inlines = [ProductImageInline]
 
+
 @admin.register(Review)
 class ReviewAdmin(admin.ModelAdmin):
     list_display = ["product", "buyer", "rating", "created_at"]
