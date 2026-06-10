@@ -160,6 +160,8 @@ class GoogleLoginSerializer(serializers.Serializer):
         email = idinfo.get("email", "").lower()
         if not email:
             raise serializers.ValidationError({"id_token": "Token does not contain an email address."})
+        if not idinfo.get("email_verified"):
+            raise serializers.ValidationError({"id_token": "Google email address is not verified."})
 
         google_uid = idinfo["sub"]
 
@@ -206,6 +208,13 @@ class GoogleLoginSerializer(serializers.Serializer):
 
         if "error" in idinfo:
             raise serializers.ValidationError({"id_token": idinfo["error"]})
+
+        if idinfo.get("email_verified") not in (True, "true"):
+            raise serializers.ValidationError({"id_token": "Google email address is not verified."})
+
+        expected_client_id = settings.SOCIALACCOUNT_PROVIDERS.get("google", {}).get("APP", {}).get("client_id", "")
+        if expected_client_id and idinfo.get("aud") != expected_client_id:
+            raise serializers.ValidationError({"id_token": "Token was not issued for this application."})
 
         from allauth.socialaccount.models import SocialAccount
         email = idinfo.get("email", "").lower()
