@@ -1,5 +1,12 @@
+import os
 from django.db import models
+from django.utils.text import slugify
 from shops.models import Shop
+
+
+def _product_image_path(instance, filename):
+    name, ext = os.path.splitext(filename)
+    return f"products/images/{slugify(name)}{ext.lower()}"
 
 
 class Product(models.Model):
@@ -35,7 +42,7 @@ class Product(models.Model):
 
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
-    image = models.FileField(upload_to='products/images/')
+    image = models.FileField(upload_to=_product_image_path)
     is_primary = models.BooleanField(default=False)
     order = models.PositiveSmallIntegerField(default=0)
 
