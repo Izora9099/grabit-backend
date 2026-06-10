@@ -46,9 +46,9 @@ STORAGES = {
 }
 
 # Cloudflare R2 — S3-compatible object storage
-# django-storages builds URLs as: https://{AWS_S3_CUSTOM_DOMAIN}/{file_key}
-# Keep AWS_LOCATION='' so the bucket name is never prepended to the file key;
-# it belongs only in AWS_S3_CUSTOM_DOMAIN (via R2_PUBLIC_URL), not the stored path.
+# django-storages stores DB paths WITHOUT the location prefix but re-adds it in url().
+# AWS_LOCATION must match the prefix used when files were originally uploaded ('grabit-media'),
+# otherwise url() generates the wrong path and all existing files 404.
 AWS_STORAGE_BUCKET_NAME  = config('R2_BUCKET_NAME')
 AWS_S3_ENDPOINT_URL      = config('R2_ENDPOINT_URL')
 AWS_ACCESS_KEY_ID        = config('R2_ACCESS_KEY_ID')
@@ -57,7 +57,7 @@ AWS_S3_REGION_NAME       = 'auto'
 AWS_S3_FILE_OVERWRITE    = False
 AWS_DEFAULT_ACL          = 'public-read'
 AWS_QUERYSTRING_AUTH     = False
-AWS_LOCATION             = ''
+AWS_LOCATION             = 'grabit-media'
 AWS_S3_CUSTOM_DOMAIN     = config('R2_PUBLIC_URL').replace('https://', '')
 
 # Email (configure your SMTP provider here)
