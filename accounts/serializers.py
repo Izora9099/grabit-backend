@@ -35,13 +35,14 @@ class LoginSerializer(serializers.Serializer):
         if not identifier or not password:
             raise serializers.ValidationError("Must include 'email' or 'username' and 'password'.")
 
-        user = authenticate(username=identifier.lower(), password=password)
+        request = self.context.get("request")
+        user = authenticate(request=request, username=identifier.lower(), password=password)
         if not user:
-            user = authenticate(username=identifier, password=password)
+            user = authenticate(request=request, username=identifier, password=password)
         if not user:
             try:
                 u = User.objects.get(email__iexact=identifier)
-                user = authenticate(username=u.username, password=password)
+                user = authenticate(request=request, username=u.username, password=password)
             except User.DoesNotExist:
                 user = None
 
