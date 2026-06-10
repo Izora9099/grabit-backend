@@ -25,6 +25,8 @@ DATABASES = {
 CORS_ALLOWED_ORIGINS = [
     "https://grabit.sale",
     "https://grab-it.ndifonlemuel.workers.dev",
+    "http://localhost:3000",
+    "http://localhost:5173",
 ]
 CORS_ALLOW_CREDENTIALS = True  # needed for HttpOnly cookie to be sent cross-origin
 
