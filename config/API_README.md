@@ -1,16 +1,16 @@
-# 📦 Backend API Reference — Frontend Developer Guide
+# GrabIT Backend API Reference
 
-> Base URL: `http://localhost:8000/api/` (update to your deployed URL)  
-> Auth: Token-based — include `Authorization: Token <your_token>` in every protected request header.
+> **Base URL:** `https://grabit-backend.up.railway.app/api/v1`  
+> **Auth:** JWT — include `Authorization: Bearer <access_token>` on every protected request.  
+> **Refresh token** is stored in an HttpOnly cookie (`grabit_refresh`) — the browser/app sends it automatically on `/auth/token/refresh/`.
 
 ---
 
-## 🔐 Authentication
+## Authentication
 
 ### Register
 `POST /auth/register/`
 
-**Body:**
 ```json
 {
   "email": "john@example.com",
@@ -26,17 +26,17 @@
 **Response `201`:**
 ```json
 {
-  "token": "abc123...",
-  "user": { "id": 1, "email": "john@example.com", "first_name": "John", "last_name": "Doe", "role": "buyer" }
+  "access": "<jwt_access_token>",
+  "user": { "id": 1, "email": "john@example.com", "first_name": "John", "last_name": "Doe", "role": "buyer", "city": "Douala" }
 }
 ```
+Refresh token set as HttpOnly cookie.
 
 ---
 
 ### Login
 `POST /auth/login/`
 
-**Body:**
 ```json
 { "email": "john@example.com", "password": "securepassword" }
 ```
@@ -44,21 +44,62 @@
 **Response `200`:**
 ```json
 {
-  "token": "abc123...",
+  "access": "<jwt_access_token>",
   "user": { "id": 1, "email": "john@example.com", "role": "buyer" }
 }
 ```
+Refresh token set as HttpOnly cookie.
 
-> 💡 Save the token to localStorage/AsyncStorage and attach it to every subsequent request.
+---
+
+### Refresh Access Token
+`POST /auth/token/refresh/`
+
+No body needed. Reads the refresh token from the `grabit_refresh` cookie.
+
+**Response `200`:**
+```json
+{ "access": "<new_jwt_access_token>" }
+```
 
 ---
 
 ### Logout
 `POST /auth/logout/` 🔒
 
-No body needed. Invalidates the current token.
+No body. Blacklists the refresh token and clears the cookie.
 
 **Response `204`:** *(no content)*
+
+---
+
+### Google OAuth — Sign In
+`POST /auth/google/`
+
+```json
+{ "id_token": "<google_id_token>" }
+```
+
+**Response `200`:**
+```json
+{
+  "access": "<jwt_access_token>",
+  "user": { ... },
+  "profile_complete": false
+}
+```
+`profile_complete: false` on first sign-in — show the profile completion form.
+
+---
+
+### Google OAuth — Complete Profile (first-time only)
+`POST /auth/google/complete/` 🔒
+
+```json
+{ "role": "buyer", "city": "Douala", "phone": "6XXXXXXXX" }
+```
+
+**Response `200`:** Full user object.
 
 ---
 
@@ -66,49 +107,59 @@ No body needed. Invalidates the current token.
 `GET /auth/me/` 🔒  
 `PATCH /auth/me/` 🔒
 
-**PATCH Body (any fields, multipart/form-data for avatar):**
+PATCH accepts `multipart/form-data` (for avatar upload) or JSON.
+
 ```json
-{ "first_name": "John", "last_name": "Doe", "phone": "6XXXXXXXX", "city": "Douala" }
+{ "first_name": "John", "city": "Buea", "phone": "6XXXXXXXX" }
+```
+
+---
+
+### Change Password
+`POST /auth/me/change-password/` 🔒
+
+```json
+{ "old_password": "current", "new_password": "newpassword" }
+```
+
+**Response `200`:**
+```json
+{ "detail": "Password updated successfully." }
 ```
 
 ---
 
 ### Addresses
-`GET /auth/me/addresses/` 🔒 — list addresses  
-`POST /auth/me/addresses/` 🔒 — add address  
+`GET /auth/me/addresses/` 🔒  
+`POST /auth/me/addresses/` 🔒  
 `GET /auth/me/addresses/<id>/` 🔒  
 `PATCH /auth/me/addresses/<id>/` 🔒  
 `DELETE /auth/me/addresses/<id>/` 🔒
 
 **POST Body:**
 ```json
-{
-  "label": "Home",
-  "line": "123 Main St",
-  "city": "Buea",
-  "is_primary": true
-}
+{ "label": "Home", "line": "123 Main St", "city": "Buea", "is_primary": true }
 ```
 
 ---
 
 ### Agent KYC Documents
-`GET /auth/me/agent-kyc/` 🔒 — list agent KYC documents (agents only)  
-`POST /auth/me/agent-kyc/` 🔒 — upload a KYC document (multipart/form-data)  
+`GET /auth/me/agent-kyc/` 🔒  
+`POST /auth/me/agent-kyc/` 🔒 — `multipart/form-data`  
 `GET /auth/me/agent-kyc/<id>/` 🔒  
 `PATCH /auth/me/agent-kyc/<id>/` 🔒  
 `DELETE /auth/me/agent-kyc/<id>/` 🔒
 
-**POST Body:** `multipart/form-data` — fields: `doc_type` (`identity` / `driving_license` / `vehicle` / `address`), `label`, `file`
+Fields: `doc_type` (`identity` / `driving_license` / `vehicle` / `address`), `label`, `file`
 
 ---
 
-## 🏪 Shops
+## Shops
 
-### List All Active Shops
+### List Active Shops
 `GET /shops/` — public
 
-**Query params:** `?city=Buea` `?category=electronics`
+Query params: `?city=Buea` `?category=electronics`
 
 ---
 
@@ -122,22 +173,28 @@ No body needed. Invalidates the current token.
 
 ---
 
+### Shop Reviews
+`GET /shops/<handle>/reviews/` — public  
+`POST /shops/<handle>/reviews/` 🔒
+
+```json
+{ "rating": 4, "text": "Great service!" }
+```
+
+---
+
 ### Follow / Unfollow a Shop
 `POST /shops/<handle>/follow/` 🔒
 
-Toggles follow state. First call follows, second call unfollows.
+Toggles. First call follows, second call unfollows.
 
-**Response:**
-```json
-{ "following": true }
-```
+**Response:** `{ "following": true }`
 
 ---
 
 ### My Shop (Vendor)
 `GET /shops/my/` 🔒  
-`PUT /shops/my/` 🔒  
-`PATCH /shops/my/` 🔒 — supports `multipart/form-data` for `logo` and `banner` uploads
+`PATCH /shops/my/` 🔒 — `multipart/form-data` for `logo` / `banner` uploads
 
 ---
 
@@ -146,11 +203,11 @@ Toggles follow state. First call follows, second call unfollows.
 
 ---
 
-### KYC Documents (Vendor Shop)
+### Shop KYC Documents (Vendor)
 `GET /shops/my/kyc/` 🔒  
-`POST /shops/my/kyc/` 🔒
+`POST /shops/my/kyc/` 🔒 — `multipart/form-data`
 
-**POST Body:** `multipart/form-data` — fields: `doc_type` (`identity` / `address` / `business`), `label`, `file`
+Fields: `doc_type` (`identity` / `address` / `business`), `label`, `file`
 
 ---
 
@@ -159,28 +216,49 @@ Toggles follow state. First call follows, second call unfollows.
 
 ---
 
-## 🛍️ Products
+## Products
 
-### List Products (Public)
+### List Products
 `GET /products/` — public
 
-**Query params:**
 | Param | Example | Description |
 |-------|---------|-------------|
-| `search` | `?search=shoes` | Search name/description/category |
+| `search` | `?search=shoes` | Search name / description / category |
 | `category` | `?category=fashion` | Filter by category |
 | `city` | `?city=Buea` | Filter by shop city |
 | `condition` | `?condition=new` | `new` or `used` |
 | `min_price` | `?min_price=500` | Minimum price |
 | `max_price` | `?max_price=5000` | Maximum price |
-| `ordering` | `?ordering=price` | Sort: `price`, `-price`, `rating`, `created_at` |
+| `ordering` | `?ordering=-price` | `price`, `-price`, `rating`, `created_at` |
 
 ---
 
 ### Product Detail
 `GET /products/<id>/` — public
 
-> ℹ️ Each call to this endpoint increments the product's view count.
+Each call increments the product's view count.
+
+---
+
+### Product Reviews
+`GET /products/<id>/reviews/` — public  
+`POST /products/<id>/reviews/` 🔒
+
+```json
+{ "rating": 4, "text": "Great product!" }
+```
+
+---
+
+### Wishlist
+`GET /products/wishlist/` 🔒  
+`POST /products/wishlist/` 🔒  
+`DELETE /products/wishlist/<id>/` 🔒
+
+**POST Body:**
+```json
+{ "product_id": 42 }
+```
 
 ---
 
@@ -188,7 +266,6 @@ Toggles follow state. First call follows, second call unfollows.
 `GET /products/vendor/` 🔒  
 `POST /products/vendor/` 🔒
 
-**POST Body:**
 ```json
 {
   "name": "Air Jordan 1",
@@ -196,7 +273,8 @@ Toggles follow state. First call follows, second call unfollows.
   "price": 45000,
   "category": "fashion",
   "condition": "new",
-  "stock": 10
+  "stock": 10,
+  "status": "active"
 }
 ```
 
@@ -209,47 +287,30 @@ Toggles follow state. First call follows, second call unfollows.
 
 ---
 
-### Product Reviews
-`GET /products/<id>/reviews/` — public  
-`POST /products/<id>/reviews/` 🔒
+### Vendor: Product Images
+`GET /products/vendor/<id>/images/` 🔒  
+`POST /products/vendor/<id>/images/` 🔒 — `multipart/form-data`
 
-**POST Body:**
-```json
-{ "rating": 4, "comment": "Great product!" }
-```
+Fields: `image` (file), `is_primary` (bool), `order` (int)
 
----
-
-### Wishlist
-`GET /products/wishlist/` 🔒 — list wishlist items  
-`POST /products/wishlist/` 🔒 — add to wishlist  
-`DELETE /products/wishlist/<id>/` 🔒 — remove from wishlist
-
-**POST Body:**
-```json
-{ "product": 42 }
-```
+`GET /products/vendor/<id>/images/<img_id>/` 🔒  
+`PATCH /products/vendor/<id>/images/<img_id>/` 🔒  
+`DELETE /products/vendor/<id>/images/<img_id>/` 🔒
 
 ---
 
-## 📦 Orders
+## Orders
 
-### List My Orders / Create Order
+### List / Create Orders
 `GET /orders/` 🔒  
 `POST /orders/` 🔒
 
-> The response list is automatically filtered by role — vendors see their shop's orders, agents see assigned orders, buyers see their own.
+Response list is filtered by role: vendors see shop orders, agents see assigned orders, buyers see their own.
 
-**POST Body (buyer creates order):**
+**POST Body (buyer):**
 ```json
-{
-  "product": 42,
-  "quantity": 2,
-  "delivery_address": 1
-}
+{ "product": 42, "quantity": 2, "delivery_address": 1 }
 ```
-
-**Response `201`:** Full order object (see Order Status section below).
 
 ---
 
@@ -261,17 +322,13 @@ Toggles follow state. First call follows, second call unfollows.
 ### Update Order Status
 `PATCH /orders/<order_id>/status/` 🔒
 
-Only certain roles can make certain transitions:
+| Role | Allowed transition |
+|------|--------------------|
+| Vendor | `paid_escrow` → `preparing` |
+| Vendor | `preparing` → `picked_up` |
+| Agent | `picked_up` → `in_transit` |
+| Agent | `in_transit` → `delivered_confirm` |
 
-| Role | From | To |
-|------|------|----|
-| Vendor | `paid_escrow` | `preparing` |
-| Vendor | `preparing` | `picked_up` |
-| Agent | `picked_up` | `in_transit` |
-| Agent | `in_transit` | `delivered_confirm` |
-| Buyer | `delivered_confirm` | `completed` |
-
-**Body:**
 ```json
 { "status": "preparing" }
 ```
@@ -281,26 +338,21 @@ Only certain roles can make certain transitions:
 ### Buyer: Confirm Delivery
 `POST /orders/<order_id>/confirm/` 🔒
 
-Buyer confirms delivery → marks order `completed` and releases escrow to vendor.
-
-**Response:**
-```json
-{ "detail": "Order confirmed. Escrow released to vendor." }
-```
+Marks order `completed` and releases escrow to vendor.
 
 ---
 
 ### Vendor: Cancel Order
 `POST /orders/<order_id>/cancel/` 🔒
 
-Vendor cancels an order before it has been picked up. Allowed from: `awaiting_payment`, `paid_escrow`, `preparing`, `agent_assigned`.
+Allowed from: `awaiting_payment`, `paid_escrow`, `preparing`, `agent_assigned`.
 
 ---
 
 ### Agent: Decline Assignment
 `POST /orders/<order_id>/decline/` 🔒
 
-Agent declines an `agent_assigned` order — order returns to `preparing` for reassignment.
+Agent declines an `agent_assigned` order — reverts to `preparing` for reassignment.
 
 ---
 
@@ -308,126 +360,38 @@ Agent declines an `agent_assigned` order — order returns to `preparing` for re
 
 ```
 [created] → paid_escrow → preparing → agent_assigned → picked_up → in_transit → delivered_confirm → completed
-                                    ↘ cancelled
+                                     ↘ cancelled
                                                                                          ↘ disputed → refunded
                                                                                                     → partially_resolved
-                                                                                                    → completed (release_vendor)
+                                                                                                    → completed
 ```
 
 ---
 
-## 💬 Messages
+## Messages
 
 ### List & Send Messages
-`GET /messages/` 🔒 — shows all messages sent to or by you  
-`POST /messages/` 🔒
+`GET /orders/messages/` 🔒  
+`POST /orders/messages/` 🔒
 
-**POST Body:**
 ```json
-{
-  "recipient": 5,
-  "content": "Hey, is this item still available?"
-}
+{ "recipient": 5, "content": "Is this item still available?" }
 ```
 
 ---
 
-## 💳 Payments
+## Agent
 
-### Initiate Payment
-`POST /payments/initiate/` 🔒
-
-**Body:**
-```json
-{
-  "order_id": "ORD-abc123",
-  "method": "momo",          // "momo" | "orange_money"
-  "phone_number": "6XXXXXXXX"
-}
-```
-
-**Response `201`:** Payment object with status `paid` (currently simulated — real MoMo/Orange Money SDK coming soon).
-
----
-
-### My Payouts (Vendor / Agent)
-`GET /payments/payouts/` 🔒
-
----
-
-## 🔔 Notifications
-
-### List Notifications
-`GET /notifications/` 🔒
-
----
-
-### Mark All as Read
-`POST /notifications/read-all/` 🔒
-
-**Response:**
-```json
-{ "detail": "All notifications marked as read." }
-```
-
----
-
-### Single Notification
-`GET /notifications/<id>/` 🔒  
-`PATCH /notifications/<id>/` 🔒 — e.g. mark one as read
-
----
-
-## 📁 Disputes
-
-### File a Dispute / List Disputes
-`GET /disputes/` 🔒  
-`POST /disputes/` 🔒
-
-**POST Body:**
-```json
-{ "order": 1, "reason": "not_delivered", "description": "Package never arrived." }
-```
-
----
-
-### Dispute Detail
-`GET /disputes/<dispute_id>/` 🔒
-
----
-
-### Upload Evidence
-`POST /disputes/<dispute_id>/evidence/` 🔒
-
-Upload or replace evidence after a dispute has been filed. Body: `multipart/form-data` with `evidence` file field.
-
----
-
-### Resolve Dispute (Admin)
-`PATCH /disputes/<dispute_id>/resolve/` 🔒
-
-**Body:**
-```json
-{ "resolution": "refund_buyer", "admin_note": "Item clearly not delivered." }
-```
-
-`resolution` options: `refund_buyer` (order → `refunded`) | `release_vendor` (order → `completed`) | `partial_refund` (order → `partially_resolved`)
-
----
-
-## 🚴 Agent Endpoints
-
-### Agent's Assigned Deliveries
+### Assigned Deliveries
 `GET /orders/agent/assignments/` 🔒
 
-**Query param:** `?status=in_transit` — filter by status
+Query param: `?status=in_transit`
 
 ---
 
 ### Agent Stats
 `GET /orders/agent/stats/` 🔒
 
-**Response:**
 ```json
 {
   "today_deliveries": 3,
@@ -439,25 +403,74 @@ Upload or replace evidence after a dispute has been filed. Body: `multipart/form
 
 ---
 
-## 🔑 Auth Header Cheatsheet
+## Payments
 
-```js
-// Axios
-axios.defaults.headers.common['Authorization'] = `Token ${token}`;
+### Initiate Payment
+`POST /payments/initiate/` 🔒
 
-// Fetch
-fetch(url, {
-  headers: {
-    'Authorization': `Token ${token}`,
-    'Content-Type': 'application/json',
-  }
-});
+```json
+{
+  "order_id": "ORD-abc123",
+  "method": "momo",
+  "phone_number": "6XXXXXXXX"
+}
+```
+
+`method`: `"momo"` | `"orange_money"`
+
+---
+
+### My Payouts
+`GET /payments/payouts/` 🔒
+
+---
+
+## Notifications
+
+`GET /notifications/` 🔒  
+`GET /notifications/<id>/` 🔒  
+`PATCH /notifications/<id>/` 🔒 — e.g. mark as read  
+`POST /notifications/read-all/` 🔒
+
+---
+
+## Disputes
+
+### File / List
+`GET /disputes/` 🔒  
+`POST /disputes/` 🔒
+
+```json
+{ "order": "ORD-abc123", "reason": "not_delivered", "description": "Package never arrived." }
 ```
 
 ---
 
-## 🛡️ Admin Endpoints
-All require `Authorization: Token <admin_token>`.
+### Dispute Detail
+`GET /disputes/<dispute_id>/` 🔒
+
+---
+
+### Upload Evidence
+`POST /disputes/<dispute_id>/evidence/` 🔒 — `multipart/form-data`
+
+Field: `evidence` (file)
+
+---
+
+### Resolve Dispute (Admin)
+`PATCH /disputes/<dispute_id>/resolve/` 🔒
+
+```json
+{ "resolution": "refund_buyer", "admin_note": "Item clearly not delivered." }
+```
+
+`resolution`: `refund_buyer` | `release_vendor` | `partial_refund`
+
+---
+
+## Admin Endpoints
+All require `Authorization: Bearer <access_token>` for a staff/admin user.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -467,35 +480,51 @@ All require `Authorization: Token <admin_token>`.
 | GET | `/auth/admin/gmv/` | Daily GMV + top vendors |
 | GET | `/auth/admin/shops/` | All shops (`?q=`) |
 | GET | `/auth/admin/verification/` | Vendor KYC queue |
-| PATCH | `/auth/admin/verification/<shop_id>/` | Approve/reject vendor shop |
+| PATCH | `/auth/admin/verification/<shop_id>/` | Approve / reject vendor |
 | GET | `/auth/admin/agent-verification/` | Agent KYC queue |
-| PATCH | `/auth/admin/agent-verification/<user_id>/` | Approve/reject agent KYC |
+| PATCH | `/auth/admin/agent-verification/<user_id>/` | Approve / reject agent |
 | GET | `/auth/admin/disputes/` | All disputes (`?status=`) |
 | GET | `/auth/admin/payouts/` | All payouts |
 | GET | `/auth/admin/commissions/` | Monthly commission report |
 | GET | `/auth/admin/health/` | System health checks |
-| GET | `/auth/admin/fraud/` | Fraud signals (users with 3+ failed payments) |
+| GET | `/auth/admin/fraud/` | Users with 3+ failed payments |
 
 ---
 
-## ⚠️ Common Error Responses
+## Auth Header
+
+```js
+// Axios
+axios.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+
+// Fetch
+fetch(url, {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+  }
+});
+```
+
+> The refresh token is in an HttpOnly cookie — never store it manually. Call `/auth/token/refresh/` to get a new access token when the current one expires (access tokens last 15 min, refresh tokens 7 days).
+
+---
+
+## Common Error Responses
 
 | Status | Meaning |
 |--------|---------|
-| `400` | Bad request / validation error — check the response body for field errors |
-| `401` | Unauthorized — missing or invalid token |
-| `403` | Forbidden — you don't have permission for this action |
-| `404` | Not found |
+| `400` | Validation error — check response body for field errors |
+| `401` | Missing or expired token |
+| `403` | Insufficient permissions |
+| `404` | Resource not found |
+| `429` | Rate limit exceeded |
 
-**Validation error shape:**
 ```json
-{
-  "field_name": ["This field is required."],
-  "non_field_errors": ["Some general error."]
-}
+{ "field_name": ["This field is required."] }
 ```
 
 ---
 
-> 🔒 = Requires `Authorization: Token <token>` header  
-> All request bodies use `Content-Type: application/json` unless noted otherwise (KYC uses `multipart/form-data`)
+> 🔒 = requires `Authorization: Bearer <access_token>`  
+> Multipart endpoints are noted where applicable; everything else uses `Content-Type: application/json`.
