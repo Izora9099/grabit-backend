@@ -45,19 +45,16 @@ STORAGES = {
     },
 }
 
-# Supabase Storage — S3-compatible object storage
-AWS_STORAGE_BUCKET_NAME = "grabit-media"
-AWS_S3_ENDPOINT_URL = config("SUPABASE_STORAGE_URL")
-AWS_ACCESS_KEY_ID = config("SUPABASE_STORAGE_ACCESS_KEY")
-AWS_SECRET_ACCESS_KEY = config("SUPABASE_STORAGE_SECRET_KEY")
-AWS_S3_REGION_NAME = config("SUPABASE_STORAGE_REGION", default="auto")
-AWS_S3_FILE_OVERWRITE = False
-AWS_DEFAULT_ACL = "public-read"
-AWS_QUERYSTRING_AUTH = False
-# Override URL generation to use Supabase public object URLs instead of the S3 API endpoint.
-# django-storages builds: https://{custom_domain}/{file_key}, so the path prefix is embedded here.
-# AWS_LOCATION is intentionally NOT set — it would corrupt the S3 key used during upload.
-AWS_S3_CUSTOM_DOMAIN = "xtshkfyzmsjlojegqyin.supabase.co/storage/v1/object/public/grabit-media"
+# Cloudflare R2 — S3-compatible object storage
+AWS_STORAGE_BUCKET_NAME  = config('R2_BUCKET_NAME')
+AWS_S3_ENDPOINT_URL      = config('R2_ENDPOINT_URL')
+AWS_ACCESS_KEY_ID        = config('R2_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY    = config('R2_SECRET_ACCESS_KEY')
+AWS_S3_REGION_NAME       = 'auto'
+AWS_S3_FILE_OVERWRITE    = False
+AWS_DEFAULT_ACL          = 'public-read'
+AWS_QUERYSTRING_AUTH     = False
+AWS_S3_CUSTOM_DOMAIN     = config('R2_PUBLIC_URL').replace('https://', '')
 
 # Email (configure your SMTP provider here)
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"

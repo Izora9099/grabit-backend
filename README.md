@@ -854,6 +854,16 @@ Environment variables are stored outside the codebase — never committed to Git
 | `SUPABASE_ANON_KEY` | Optional | Public "anonymous" JWT key. Safe to expose in frontend code. Grants limited access per RLS policies. |
 | `SUPABASE_SERVICE_KEY` | Optional | Secret service role JWT key. Bypasses all RLS. **Never expose in frontend code** — treat like a database root password. |
 
+### Cloudflare R2 (media storage)
+
+| Variable | Required | Description |
+|---|---|---|
+| `R2_BUCKET_NAME` | Production | R2 bucket name (e.g. `grabit-media`) |
+| `R2_ENDPOINT_URL` | Production | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY_ID` | Production | R2 API token Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | Production | R2 API token Secret Access Key |
+| `R2_PUBLIC_URL` | Production | Public URL for uploaded files (e.g. `https://media.grabit.sale`) |
+
 ### Email (production SMTP)
 
 | Variable | Default | Description |
@@ -927,7 +937,7 @@ Before every production deployment, confirm:
 - [ ] `SUPABASE_TRANSACTION_URI` and `SUPABASE_DIRECT_URI` are valid and use the correct database user
 - [ ] Configure SMTP variables for transactional email
 - [ ] Integrate real MTN MoMo / Orange Money SDK in `payments/views.py`
-- [ ] Set up cloud storage (S3 / Cloudinary) for media files if needed
+- [ ] `R2_BUCKET_NAME`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_URL` set in Railway variables
 
 ---
 
