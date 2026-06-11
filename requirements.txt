@@ -26,10 +26,10 @@ django-storages==1.14.4
 boto3==1.34.162
 
 # ── Authentication — JWT ──────────────────────────────────────────────────────
-djangorestframework-simplejwt==5.3.1
+djangorestframework-simplejwt==5.5.1
 
 # ── Authentication — Google OAuth (via allauth) ───────────────
-django-allauth==64.2.1
+django-allauth==65.14.1
 google-auth==2.29.0         # verifies Google ID tokens with audience validation
 
 # ── Admin — Brute Force Protection ───────────────────────────────────────────

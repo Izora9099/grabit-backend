@@ -170,7 +170,7 @@ LOGIN_REDIRECT_URL = f"/{config('ADMIN_URL_PATH', default='internal-mgmt')}/"
 
 # ── Allauth ───────────────────────────────────────────────────────────────────
 ACCOUNT_EMAIL_VERIFICATION = "none"
-ACCOUNT_AUTHENTICATION_METHOD = "email"
+ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_EMAIL_REQUIRED = True
 
 SOCIALACCOUNT_PROVIDERS = {
