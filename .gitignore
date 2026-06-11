@@ -45,3 +45,5 @@ desktop.ini
 .coverage
 htmlcov/
 .pytest_cache/
+test_google_auth.html
+

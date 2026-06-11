@@ -1,6 +1,6 @@
 # GrabIT Backend API Reference
 
-> **Base URL:** `https://grabit-backend.up.railway.app/api/v1`  
+> **Base URL:** `https://web-production-fcb36.up.railway.app/api/v1`  
 > **Auth:** JWT — include `Authorization: Bearer <access_token>` on every protected request.  
 > **Refresh token** is stored in an HttpOnly cookie (`grabit_refresh`) — the browser/app sends it automatically on `/auth/token/refresh/`.
 
