@@ -5,6 +5,10 @@ urlpatterns = [
     path("", views.OrderListCreateView.as_view(), name="orders"),
     # Static paths must come before dynamic <str:order_id>/ to avoid being swallowed
     path("messages/", views.MessageListCreateView.as_view(), name="messages"),
+    path("messages/unread-count/", views.UnreadCountView.as_view(), name="messages-unread-count"),
+    path("messages/conversations/", views.ConversationListView.as_view(), name="conversations"),
+    path("messages/conversations/<int:user_id>/", views.ConversationDetailView.as_view(), name="conversation-detail"),
+    path("messages/<int:pk>/", views.MessageMarkReadView.as_view(), name="message-mark-read"),
     path("agent/assignments/", views.AgentOrdersView.as_view(), name="agent-assignments"),
     path("agent/stats/", views.AgentStatsView.as_view(), name="agent-stats"),
     # Dynamic order routes

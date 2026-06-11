@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import EscrowEvent, Order, Message
-from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ReceiptSerializer
+from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ConversationSerializer, ReceiptSerializer
 from .signals import order_status_changed
 
 
@@ -264,6 +264,80 @@ class MessageListCreateView(generics.ListCreateAPIView):
                 raise PermissionDenied("You are not a participant in this order.")
 
         serializer.save(sender=user)
+
+
+class MessageMarkReadView(APIView):
+    """Mark a single message as read. Only the recipient can do this."""
+    def patch(self, request, pk):
+        message = get_object_or_404(Message, pk=pk, recipient=request.user)
+        message.read = True
+        message.save(update_fields=["read"])
+        return Response(MessageSerializer(message).data)
+
+
+class UnreadCountView(APIView):
+    """Returns the total number of unread messages for the authenticated user."""
+    def get(self, request):
+        count = Message.objects.filter(recipient=request.user, read=False).count()
+        return Response({"count": count})
+
+
+class ConversationListView(APIView):
+    """
+    Lists all conversations for the authenticated user, grouped by the other
+    participant. Each entry includes the last message and unread count.
+    Sorted by most recent message first.
+    """
+    def get(self, request):
+        user = request.user
+        messages = (
+            Message.objects.filter(Q(sender=user) | Q(recipient=user))
+            .select_related("sender", "recipient")
+            .order_by("created_at")
+        )
+
+        conversations = {}
+        for msg in messages:
+            other = msg.recipient if msg.sender_id == user.id else msg.sender
+            if other.id not in conversations:
+                avatar = other.avatar.url if other.avatar else None
+                conversations[other.id] = {
+                    "user_id": other.id,
+                    "user_name": other.get_full_name() or other.username,
+                    "user_avatar": avatar,
+                    "last_message": msg.body,
+                    "last_message_at": msg.created_at,
+                    "unread_count": 0,
+                }
+            else:
+                conversations[other.id]["last_message"] = msg.body
+                conversations[other.id]["last_message_at"] = msg.created_at
+
+            if not msg.read and msg.recipient_id == user.id:
+                conversations[other.id]["unread_count"] += 1
+
+        result = sorted(conversations.values(), key=lambda x: x["last_message_at"], reverse=True)
+        return Response(ConversationSerializer(result, many=True).data)
+
+
+class ConversationDetailView(generics.ListAPIView):
+    """
+    Full message thread between the authenticated user and another user.
+    Automatically marks all unread messages in the thread as read.
+    """
+    serializer_class = MessageSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        other_id = self.kwargs["user_id"]
+        qs = Message.objects.filter(
+            Q(sender=user, recipient_id=other_id) |
+            Q(sender_id=other_id, recipient=user)
+        ).select_related("sender", "recipient").order_by("created_at")
+
+        # Mark incoming unread messages as read when the thread is opened
+        qs.filter(recipient=user, read=False).update(read=True)
+        return qs
 
 
 class AgentOrdersView(generics.ListAPIView):

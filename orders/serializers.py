@@ -217,3 +217,12 @@ class MessageSerializer(serializers.ModelSerializer):
         model = Message
         fields = ["id", "order", "sender", "sender_name", "recipient", "body", "read", "created_at"]
         read_only_fields = ["id", "sender", "sender_name", "read", "created_at"]
+
+
+class ConversationSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    user_name = serializers.CharField()
+    user_avatar = serializers.CharField(allow_null=True)
+    last_message = serializers.CharField()
+    last_message_at = serializers.DateTimeField()
+    unread_count = serializers.IntegerField()
