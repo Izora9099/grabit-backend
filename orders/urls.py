@@ -9,6 +9,7 @@ urlpatterns = [
     path("agent/stats/", views.AgentStatsView.as_view(), name="agent-stats"),
     # Dynamic order routes
     path("<str:order_id>/", views.OrderDetailView.as_view(), name="order-detail"),
+    path("<str:order_id>/receipt/", views.OrderReceiptView.as_view(), name="order-receipt"),
     path("<str:order_id>/status/", views.OrderStatusUpdateView.as_view(), name="order-status"),
     path("<str:order_id>/confirm/", views.ConfirmDeliveryView.as_view(), name="order-confirm"),
     path("<str:order_id>/cancel/", views.OrderCancelView.as_view(), name="order-cancel"),

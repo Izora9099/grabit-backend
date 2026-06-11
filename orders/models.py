@@ -1,7 +1,20 @@
+from decimal import Decimal
+
 from django.db import models
 from accounts.models import User
 from products.models import Product
 from shops.models import Shop
+
+
+COMMISSION_RATES = {
+    "starter": Decimal("0.05"),
+    "growth": Decimal("0.035"),
+    "premium": Decimal("0.028"),
+}
+
+
+def get_commission_rate(shop) -> Decimal:
+    return COMMISSION_RATES.get(shop.plan, Decimal("0.05"))
 
 
 class Order(models.Model):
@@ -40,9 +53,8 @@ class Order(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.order_id:
-            last = Order.objects.order_by("-id").first()
-            next_num = (last.id + 1) if last else 10001
-            self.order_id = f"GR-{next_num}"
+            from core.sequences import next_sequence_value
+            self.order_id = f"GR-{next_sequence_value('order_id_seq')}"
         super().save(*args, **kwargs)
 
 
@@ -68,6 +80,23 @@ class EscrowEvent(models.Model):
     amount = models.PositiveIntegerField()
     note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class OrderFinancials(models.Model):
+    """Immutable financial breakdown recorded at order creation time."""
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="financials")
+    subtotal              = models.PositiveIntegerField(help_text="Sum of items before delivery fee, in XAF")
+    delivery_fee          = models.PositiveIntegerField(default=0, help_text="Delivery fee charged, in XAF")
+    total                 = models.PositiveIntegerField(help_text="subtotal + delivery_fee, in XAF")
+    commission_rate       = models.DecimalField(max_digits=6, decimal_places=4, help_text="e.g. 0.0500 for 5%")
+    platform_fee          = models.PositiveIntegerField(help_text="Platform commission, in XAF")
+    seller_amount         = models.PositiveIntegerField(help_text="Amount owed to vendor after commission, in XAF")
+    buyer_refund_amount   = models.PositiveIntegerField(null=True, blank=True, help_text="Populated on partial_refund resolution")
+    vendor_release_amount = models.PositiveIntegerField(null=True, blank=True, help_text="Populated on partial_refund resolution")
+    created_at            = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Financials for {self.order.order_id}"
 
 
 class Message(models.Model):

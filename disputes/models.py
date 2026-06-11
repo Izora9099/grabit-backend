@@ -31,6 +31,8 @@ class Dispute(models.Model):
     resolution = models.CharField(max_length=20, choices=RESOLUTION_CHOICES, blank=True)
     resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_disputes")
     admin_note = models.TextField(blank=True)
+    buyer_refund_amount   = models.PositiveIntegerField(null=True, blank=True, help_text="Set on partial_refund resolution")
+    vendor_release_amount = models.PositiveIntegerField(null=True, blank=True, help_text="Set on partial_refund resolution")
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
@@ -42,7 +44,6 @@ class Dispute(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.dispute_id:
-            last = Dispute.objects.order_by("-id").first()
-            next_num = (last.id + 1) if last else 300
-            self.dispute_id = f"DSP-{next_num}"
+            from core.sequences import next_sequence_value
+            self.dispute_id = f"DSP-{next_sequence_value('dispute_id_seq')}"
         super().save(*args, **kwargs)

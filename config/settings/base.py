@@ -24,7 +24,6 @@ INSTALLED_APPS = [
     # Third-party
     "storages",
     "rest_framework",
-    "rest_framework.authtoken",         # kept for backwards compat during rollout
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
@@ -45,7 +44,7 @@ INSTALLED_APPS = [
     "orders",
     "shops",
     "disputes",
-    "notifications",
+    "notifications.apps.NotificationsConfig",
     "payments",
 ]
 
@@ -167,7 +166,7 @@ AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 # ── Two-Factor Auth ───────────────────────────────────────────────────────────
 TWO_FACTOR_FORCE_OTP_ADMIN = True
 LOGIN_URL = "two_factor:login"
-LOGIN_REDIRECT_URL = "/internal-mgmt/"
+LOGIN_REDIRECT_URL = f"/{config('ADMIN_URL_PATH', default='internal-mgmt')}/"
 
 # ── Allauth ───────────────────────────────────────────────────────────────────
 ACCOUNT_EMAIL_VERIFICATION = "none"

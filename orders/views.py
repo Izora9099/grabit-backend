@@ -1,11 +1,14 @@
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Order, Message
-from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer
+from .models import EscrowEvent, Order, Message
+from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ReceiptSerializer
+from .signals import order_status_changed
 
 
 class OrderListCreateView(generics.ListCreateAPIView):
@@ -14,14 +17,17 @@ class OrderListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        qs = Order.objects.select_related(
+            "shop", "shop__owner", "buyer", "agent"
+        ).prefetch_related("items__product", "financials")
         if user.role == "vendor":
             try:
-                return Order.objects.filter(shop=user.shop)
+                return qs.filter(shop=user.shop)
             except Exception:
                 return Order.objects.none()
         if user.role == "agent":
-            return Order.objects.filter(agent=user)
-        return Order.objects.filter(buyer=user)
+            return qs.filter(agent=user)
+        return qs.filter(buyer=user)
 
     def create(self, request, *args, **kwargs):
         serializer = CreateOrderSerializer(data=request.data, context={"request": request})
@@ -36,14 +42,44 @@ class OrderDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        qs = Order.objects.select_related(
+            "shop", "shop__owner", "buyer", "agent"
+        ).prefetch_related("items__product", "financials")
         if user.role == "vendor":
             try:
-                return Order.objects.filter(shop=user.shop)
+                return qs.filter(shop=user.shop)
             except Exception:
                 return Order.objects.none()
         if user.role == "agent":
-            return Order.objects.filter(agent=user)
-        return Order.objects.filter(buyer=user)
+            return qs.filter(agent=user)
+        return qs.filter(buyer=user)
+
+
+class OrderReceiptView(generics.RetrieveAPIView):
+    """
+    Returns a receipt-optimised payload for a single order.
+    Includes payment details, buyer contact, and shop contact — everything the
+    frontend needs to render or print a purchase receipt. Same BOLA scoping as
+    OrderDetailView.
+    """
+    serializer_class = ReceiptSerializer
+    lookup_field = "order_id"
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Order.objects.select_related(
+            "shop", "buyer", "agent"
+        ).prefetch_related("items__product", "financials", "payment")
+        if user.role == "vendor":
+            try:
+                return qs.filter(shop=user.shop)
+            except AttributeError:
+                return Order.objects.none()
+        if user.role == "agent":
+            return qs.filter(agent=user)
+        if user.role == "admin":
+            return qs
+        return qs.filter(buyer=user)
 
 
 class OrderStatusUpdateView(APIView):
@@ -92,11 +128,27 @@ class OrderStatusUpdateView(APIView):
             if order.status not in allowed or allowed[order.status] != new_status:
                 return Response({"detail": "Transition not allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
+            old_status = order.status
             order.status = new_status
             if new_status == "completed":
                 order.escrow_released = True
-            order.save()
+                order.save()
+                EscrowEvent.objects.create(
+                    order=order,
+                    event="released",
+                    amount=order.total,
+                    note="Buyer confirmed delivery. Escrow released to vendor.",
+                )
+            else:
+                order.save()
 
+        order_status_changed.send(
+            sender=order.__class__,
+            order=order,
+            old_status=old_status,
+            new_status=new_status,
+            actor=request.user,
+        )
         return Response(OrderSerializer(order).data)
 
 
@@ -113,6 +165,19 @@ class ConfirmDeliveryView(APIView):
             order.status = "completed"
             order.escrow_released = True
             order.save()
+            EscrowEvent.objects.create(
+                order=order,
+                event="released",
+                amount=order.total,
+                note="Buyer confirmed delivery. Escrow released to vendor.",
+            )
+        order_status_changed.send(
+            sender=order.__class__,
+            order=order,
+            old_status="delivered_confirm",
+            new_status="completed",
+            actor=request.user,
+        )
         return Response({"detail": "Order confirmed. Escrow released to vendor."})
 
 
@@ -131,9 +196,28 @@ class OrderCancelView(APIView):
             )
             if order.status not in ("awaiting_payment", "paid_escrow", "preparing", "agent_assigned"):
                 return Response({"detail": "Order cannot be cancelled at this stage."}, status=400)
+
+            was_paid = order.status == "paid_escrow"
+            old_status = order.status
             order.status = "cancelled"
             order.save()
 
+            if was_paid:
+                # Funds were in escrow — log that a refund is due so admin/payment processor can action it
+                EscrowEvent.objects.create(
+                    order=order,
+                    event="refunded",
+                    amount=order.total,
+                    note="Vendor cancelled order after buyer payment. Refund due to buyer.",
+                )
+
+        order_status_changed.send(
+            sender=order.__class__,
+            order=order,
+            old_status=old_status,
+            new_status="cancelled",
+            actor=request.user,
+        )
         return Response(OrderSerializer(order).data)
 
 
@@ -161,10 +245,25 @@ class MessageListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        return Message.objects.filter(sender=user) | Message.objects.filter(recipient=user)
+        return (
+            Message.objects.filter(Q(sender=user) | Q(recipient=user))
+            .select_related("sender", "recipient")
+            .order_by("created_at")
+        )
 
     def perform_create(self, serializer):
-        serializer.save(sender=self.request.user)
+        user = self.request.user
+        order = serializer.validated_data.get("order")
+        recipient = serializer.validated_data["recipient"]
+
+        if order:
+            allowed_ids = {order.buyer_id, order.shop.owner_id}
+            if order.agent_id:
+                allowed_ids.add(order.agent_id)
+            if user.id not in allowed_ids or recipient.id not in allowed_ids:
+                raise PermissionDenied("You are not a participant in this order.")
+
+        serializer.save(sender=user)
 
 
 class AgentOrdersView(generics.ListAPIView):
@@ -174,7 +273,9 @@ class AgentOrdersView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         status_filter = self.request.query_params.get("status")
-        qs = Order.objects.filter(agent=user)
+        qs = Order.objects.select_related(
+            "shop", "shop__owner", "buyer", "agent"
+        ).prefetch_related("items__product", "financials").filter(agent=user)
         if status_filter:
             qs = qs.filter(status=status_filter)
         return qs
@@ -192,8 +293,8 @@ class AgentStatsView(APIView):
         week_start = today - datetime.timedelta(days=today.weekday())
 
         deliveries = Order.objects.filter(agent=user)
-        today_count = deliveries.filter(placed_at__date=today, status="completed").count()
-        week_orders = deliveries.filter(placed_at__date__gte=week_start)
+        today_count = deliveries.filter(updated_at__date=today, status="completed").count()
+        week_orders = deliveries.filter(updated_at__date__gte=week_start)
 
         from payments.models import Payout
         week_earnings = Payout.objects.filter(

@@ -11,7 +11,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from orders.models import Order
+from orders.models import EscrowEvent, Order
+from orders.signals import payment_confirmed
 from .models import Payment, Payout, ProcessedWebhook
 from .serializers import InitiatePaymentSerializer, PaymentSerializer, PayoutSerializer
 
@@ -21,22 +22,51 @@ class InitiatePaymentView(APIView):
     def post(self, request):
         serializer = InitiatePaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        order = Order.objects.get(order_id=serializer.validated_data["order_id"], buyer=request.user)
-        payment, created = Payment.objects.get_or_create(
-            order=order,
-            defaults={
-                "method": serializer.validated_data["method"],
-                "amount": order.total,
-                "phone_number": serializer.validated_data.get("phone_number", ""),
-            }
-        )
-        # TODO: integrate real MTN MoMo / Orange Money SDK here
-        # For now, simulate success
-        payment.status = "paid"
-        payment.external_ref = f"MOCK-{order.order_id}"
-        payment.save()
-        order.status = "paid_escrow"
-        order.save()
+
+        with transaction.atomic():
+            order = Order.objects.select_for_update().get(
+                order_id=serializer.validated_data["order_id"],
+                buyer=request.user,
+            )
+
+            if order.status != "awaiting_payment":
+                return Response(
+                    {"detail": "Order is not awaiting payment."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            payment, created = Payment.objects.get_or_create(
+                order=order,
+                defaults={
+                    "method": serializer.validated_data["method"],
+                    "amount": order.total,
+                    "phone_number": serializer.validated_data.get("phone_number", ""),
+                },
+            )
+
+            if not created and payment.status == "paid":
+                return Response(
+                    {"detail": "Payment already completed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # TODO: integrate real MTN MoMo / Orange Money SDK here
+            # For now, simulate success
+            payment.status = "paid"
+            payment.external_ref = f"MOCK-{order.order_id}"
+            payment.save()
+
+            order.status = "paid_escrow"
+            order.save()
+
+            EscrowEvent.objects.create(
+                order=order,
+                event="held",
+                amount=order.total,
+                note="Payment received. Funds held in escrow.",
+            )
+            payment_confirmed.send(sender=payment.__class__, payment=payment, order=order)
+
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
 
@@ -87,7 +117,6 @@ class FapshiWebhookView(APIView):
         try:
             ProcessedWebhook.objects.create(trans_id=trans_id)
         except IntegrityError:
-            # Already processed — acknowledge without reprocessing
             return Response({"detail": "Already processed."}, status=200)
 
         # 4. Process the event inside a transaction with a row-level lock
@@ -105,5 +134,11 @@ class FapshiWebhookView(APIView):
                     if order.status == "awaiting_payment":
                         order.status = "paid_escrow"
                         order.save(update_fields=["status"])
+                        EscrowEvent.objects.create(
+                            order=order,
+                            event="held",
+                            amount=order.total,
+                            note="Payment confirmed via Fapshi webhook. Funds held in escrow.",
+                        )
 
         return Response({"detail": "OK."}, status=200)

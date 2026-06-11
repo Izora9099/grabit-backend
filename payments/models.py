@@ -26,9 +26,8 @@ class Payment(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.payment_id:
-            last = Payment.objects.order_by("-id").first()
-            next_num = (last.id + 1) if last else 1000
-            self.payment_id = f"PAY-{next_num}"
+            from core.sequences import next_sequence_value
+            self.payment_id = f"PAY-{next_sequence_value('payment_id_seq')}"
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -51,9 +50,8 @@ class Payout(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.payout_id:
-            last = Payout.objects.order_by("-id").first()
-            next_num = (last.id + 1) if last else 1
-            self.payout_id = f"PO-{next_num}"
+            from core.sequences import next_sequence_value
+            self.payout_id = f"PO-{next_sequence_value('payout_id_seq')}"
         super().save(*args, **kwargs)
 
     def __str__(self):
