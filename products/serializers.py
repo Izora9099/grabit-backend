@@ -49,7 +49,8 @@ class ProductDetailSerializer(ProductListSerializer):
 class ProductWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
-        fields = ["name", "description", "price", "category", "condition", "stock", "status", "is_premium"]
+        fields = ["id", "name", "description", "price", "category", "condition", "stock", "status", "is_premium"]
+        read_only_fields = ["id"]
 
     def create(self, validated_data):
         try:
