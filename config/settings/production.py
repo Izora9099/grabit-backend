@@ -10,15 +10,9 @@ DEBUG = False
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
 
 DATABASES = {
-    # Supabase transaction pooler (port 6543) — used for all live queries
     "default": dj_database_url.parse(
-        config("SUPABASE_TRANSACTION_URI"),
+        config("DATABASE_URL"),
         conn_max_age=600,
-    ),
-    # Supabase direct connection (port 5432) — used only for migrations
-    "direct": dj_database_url.parse(
-        config("SUPABASE_DIRECT_URI"),
-        conn_max_age=0,
     ),
 }
 
