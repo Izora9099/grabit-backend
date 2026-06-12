@@ -41,6 +41,17 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 JWT_REFRESH_COOKIE_SECURE = False
 JWT_REFRESH_COOKIE_SAMESITE = "Lax"
 
+# Generate a manifest during collectstatic so production's CompressedManifestStaticFilesStorage
+# can find hashed filenames at runtime.
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage",
+    },
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+}
+
 # Show full exception tracebacks in API error responses
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405
