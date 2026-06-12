@@ -9,19 +9,36 @@ def _product_image_path(instance, filename):
     return f"products/images/{slugify(name)}{ext.lower()}"
 
 
+class Category(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "categories"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+
 class Product(models.Model):
     CONDITION_CHOICES = [("new", "New"), ("like_new", "Like new"), ("used", "Used")]
     STATUS_CHOICES = [("live", "Live"), ("draft", "Draft"), ("out_of_stock", "Out of stock"), ("pending_review", "Pending review")]
-    CATEGORY_CHOICES = [
-        ("electronics", "Electronics"), ("fashion", "Fashion"),
-        ("home", "Home"), ("food", "Food"), ("sports", "Sports"), ("beauty", "Beauty"),
-    ]
 
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="products")
     name = models.CharField(max_length=200)
     description = models.TextField()
     price = models.PositiveIntegerField(help_text="Price in XAF")
-    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    category = models.ForeignKey(Category, on_delete=models.PROTECT, related_name="products")
     condition = models.CharField(max_length=10, choices=CONDITION_CHOICES, default="new")
     stock = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="draft")

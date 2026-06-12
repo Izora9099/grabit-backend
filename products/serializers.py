@@ -2,8 +2,36 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from core.images import process_image_upload
-from .models import Product, ProductImage, Review, WishlistItem
+from .models import Category, Product, ProductImage, Review, WishlistItem
 from shops.models import Shop
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ["id", "name", "slug", "description", "is_active"]
+        read_only_fields = ["id"]
+
+    def validate_name(self, value):
+        from django.utils.text import slugify
+        slug = slugify(value)
+        qs = Category.objects.filter(slug=slug)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("A category with this name already exists.")
+        return value
+
+    def create(self, validated_data):
+        from django.utils.text import slugify
+        validated_data.setdefault("slug", slugify(validated_data["name"]))
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if "name" in validated_data and not validated_data.get("slug"):
+            from django.utils.text import slugify
+            validated_data["slug"] = slugify(validated_data["name"])
+        return super().update(instance, validated_data)
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -24,6 +52,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     vendor = serializers.CharField(source="shop.name", read_only=True)
     vendor_id = serializers.CharField(source="shop.handle", read_only=True)
     city = serializers.CharField(source="shop.city", read_only=True)
+    category = CategorySerializer(read_only=True)
 
     class Meta:
         model = Product
@@ -47,6 +76,8 @@ class ProductDetailSerializer(ProductListSerializer):
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):
+    category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.filter(is_active=True))
+
     class Meta:
         model = Product
         fields = ["id", "name", "description", "price", "category", "condition", "stock", "status", "is_premium"]

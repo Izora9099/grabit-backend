@@ -5,29 +5,36 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
-from .models import Product, ProductImage, Review, WishlistItem
+from .models import Category, Product, ProductImage, Review, WishlistItem
 from .serializers import (
-    ProductDetailSerializer, ProductImageSerializer, ProductListSerializer,
-    ProductWriteSerializer, ReviewSerializer, WishlistSerializer,
+    CategorySerializer, ProductDetailSerializer, ProductImageSerializer,
+    ProductListSerializer, ProductWriteSerializer, ReviewSerializer, WishlistSerializer,
 )
+
+
+class CategoryListView(generics.ListAPIView):
+    """Public: list active categories for use in product forms/filters."""
+    serializer_class = CategorySerializer
+    permission_classes = [AllowAny]
+    queryset = Category.objects.filter(is_active=True)
 
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductListSerializer
     permission_classes = [AllowAny]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["name", "description", "category"]
+    search_fields = ["name", "description", "category__name"]
     ordering_fields = ["price", "rating", "created_at"]
 
     def get_queryset(self):
-        qs = Product.objects.filter(status="live").select_related("shop")
+        qs = Product.objects.filter(status="live").select_related("shop", "category")
         category = self.request.query_params.get("category")
         city = self.request.query_params.get("city")
         condition = self.request.query_params.get("condition")
         min_price = self.request.query_params.get("min_price")
         max_price = self.request.query_params.get("max_price")
         if category:
-            qs = qs.filter(category__iexact=category)
+            qs = qs.filter(category__slug__iexact=category)
         if city:
             qs = qs.filter(shop__city__iexact=city)
         if condition:
@@ -40,7 +47,7 @@ class ProductListView(generics.ListAPIView):
 
 
 class ProductDetailView(generics.RetrieveAPIView):
-    queryset = Product.objects.filter(status="live").select_related("shop")
+    queryset = Product.objects.filter(status="live").select_related("shop", "category")
     serializer_class = ProductDetailSerializer
     permission_classes = [AllowAny]
 
