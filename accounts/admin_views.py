@@ -79,14 +79,30 @@ class AdminUserListView(generics.ListAPIView):
 
 class AdminUserDetailView(APIView):
     @admin_required
+    def get(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
+        data = UserSerializer(user).data
+        data["is_active"] = user.is_active
+        data["date_joined"] = user.date_joined
+        return Response(data)
+
+    @admin_required
     def patch(self, request, pk):
-        user = User.objects.get(pk=pk)
-        # Allow toggling is_active, role, is_kyc_verified
+        try:
+            user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
         for field in ("is_active", "role", "is_kyc_verified"):
             if field in request.data:
                 setattr(user, field, request.data[field])
         user.save()
-        return Response(UserSerializer(user).data)
+        data = UserSerializer(user).data
+        data["is_active"] = user.is_active
+        data["date_joined"] = user.date_joined
+        return Response(data)
 
 
 class AdminGMVView(APIView):
