@@ -122,6 +122,47 @@ class AdminGMVView(APIView):
         })
 
 
+class AdminOrderListView(APIView):
+    @admin_required
+    def get(self, request):
+        from orders.models import Order
+
+        qs = Order.objects.select_related(
+            "buyer", "shop", "agent"
+        ).order_by("-placed_at")
+
+        status_filter = request.query_params.get("status")
+        q = request.query_params.get("q")
+
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if q:
+            qs = qs.filter(
+                Q(order_id__icontains=q) |
+                Q(buyer__username__icontains=q) |
+                Q(buyer__email__icontains=q)
+            )
+
+        data = [
+            {
+                "order_id": o.order_id,
+                "status": o.status,
+                "city": o.city,
+                "total": o.total,
+                "placed_at": o.placed_at,
+                "updated_at": o.updated_at,
+                "escrow_released": o.escrow_released,
+                "buyer_name": o.buyer.get_full_name() if o.buyer_id else "",
+                "buyer_email": o.buyer.email if o.buyer_id else "",
+                "shop_name": o.shop.name if o.shop_id else "",
+                "agent_name": o.agent.get_full_name() if o.agent_id else None,
+            }
+            for o in qs
+        ]
+
+        return Response(data)
+
+
 class AdminShopListView(APIView):
     @admin_required
     def get(self, request):

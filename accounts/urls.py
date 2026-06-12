@@ -23,6 +23,7 @@ urlpatterns = [
     path("admin/users/", admin_views.AdminUserListView.as_view(), name="admin-users"),
     path("admin/users/<int:pk>/", admin_views.AdminUserDetailView.as_view(), name="admin-user-detail"),
     path("admin/gmv/", admin_views.AdminGMVView.as_view(), name="admin-gmv"),
+    path("admin/orders/", admin_views.AdminOrderListView.as_view(), name="admin-orders"),
     path("admin/shops/", admin_views.AdminShopListView.as_view(), name="admin-shops"),
     path("admin/verification/", admin_views.AdminVerificationQueueView.as_view(), name="admin-verification"),
     path("admin/verification/<int:shop_id>/", admin_views.AdminVerifyShopView.as_view(), name="admin-verify-shop"),
