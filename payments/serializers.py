@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from .models import Payment, Payout
 
@@ -11,8 +13,18 @@ class PaymentSerializer(serializers.ModelSerializer):
 
 class InitiatePaymentSerializer(serializers.Serializer):
     order_id = serializers.CharField()
-    method = serializers.ChoiceField(choices=["mtn_momo", "orange_money", "bank_transfer"])
-    phone_number = serializers.CharField(required=False)
+    method = serializers.ChoiceField(choices=["mtn_momo", "orange_money"])
+    phone_number = serializers.CharField()
+
+    def validate_phone_number(self, value):
+        digits = re.sub(r"\D", "", value)
+        if len(digits) == 12 and digits.startswith("237"):  # tolerate +237 prefix
+            digits = digits[3:]
+        if not re.fullmatch(r"6\d{8}", digits):
+            raise serializers.ValidationError(
+                "Enter a valid 9-digit Cameroonian mobile number (e.g. 6XXXXXXXX)."
+            )
+        return digits
 
 
 class PayoutSerializer(serializers.ModelSerializer):

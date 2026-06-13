@@ -189,4 +189,23 @@ SOCIALACCOUNT_PROVIDERS = {
 JWT_REFRESH_COOKIE_NAME = "grabit_refresh"
 JWT_REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7 days in seconds
 
+# ── Fapshi — collection service (buyer payments) ──────────────────────────────
+# Switch FAPSHI_BASE_URL to https://live.fapshi.com when going live.
+# Payout service gets its own separate credentials when built.
+FAPSHI_BASE_URL       = config("FAPSHI_BASE_URL", default="https://sandbox.fapshi.com")
+FAPSHI_API_USER       = config("FAPSHI_API_USER", default="")
+FAPSHI_API_KEY        = config("FAPSHI_API_KEY", default="")
+FAPSHI_WEBHOOK_SECRET = config("FAPSHI_WEBHOOK_SECRET", default="")
+
+# ── Celery ────────────────────────────────────────────────────────────────────
+CELERY_BROKER_URL     = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_TIMEZONE       = TIME_ZONE
+CELERY_BEAT_SCHEDULE  = {
+    "reconcile-pending-payments": {
+        "task": "payments.tasks.reconcile_pending_payments",
+        "schedule": 300.0,  # every 5 minutes
+    },
+}
+
 

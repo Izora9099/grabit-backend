@@ -49,5 +49,12 @@ django-ratelimit==4.1.0
 cryptography==47.0.0        # required by allauth Google OIDC / JWT verification
 phonenumbers==9.0.32        # required by django-two-factor-auth phonenumber plugin
 
+# ── HTTP client (Fapshi API calls) ────────────────────────────────────────────
+requests==2.32.3
+
+# ── Async task queue (payment reconciliation) ─────────────────────────────────
+celery==5.4.0
+redis==5.2.1
+
 # ── Security Auditing ─────────────────────────────────────────────────────────
 pip-audit==2.7.3

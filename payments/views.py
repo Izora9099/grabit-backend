@@ -1,8 +1,7 @@
-import hashlib
 import hmac
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
@@ -11,10 +10,12 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from orders.models import EscrowEvent, Order
-from orders.signals import payment_confirmed
+from orders.models import Order
 from .models import Payment, Payout, ProcessedWebhook
-from .serializers import InitiatePaymentSerializer, PaymentSerializer, PayoutSerializer
+from .serializers import InitiatePaymentSerializer, PayoutSerializer
+from .services import FapshiCollectionService, FapshiError, settle_payment_from_status
+
+MEDIUM_MAP = {"mtn_momo": "mobile money", "orange_money": "orange money"}
 
 
 @method_decorator(ratelimit(key="user", rate="5/m", method="POST", block=True), name="post")
@@ -22,12 +23,18 @@ class InitiatePaymentView(APIView):
     def post(self, request):
         serializer = InitiatePaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        method = serializer.validated_data["method"]
+        phone = serializer.validated_data["phone_number"]
 
+        # --- Phase 1: claim the slot under a short lock, then release ---
         with transaction.atomic():
-            order = Order.objects.select_for_update().get(
-                order_id=serializer.validated_data["order_id"],
-                buyer=request.user,
-            )
+            try:
+                order = Order.objects.select_for_update().get(
+                    order_id=serializer.validated_data["order_id"],
+                    buyer=request.user,
+                )
+            except Order.DoesNotExist:
+                return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
             if order.status != "awaiting_payment":
                 return Response(
@@ -35,39 +42,56 @@ class InitiatePaymentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            payment, created = Payment.objects.get_or_create(
+            payment, _ = Payment.objects.get_or_create(
                 order=order,
-                defaults={
-                    "method": serializer.validated_data["method"],
-                    "amount": order.total,
-                    "phone_number": serializer.validated_data.get("phone_number", ""),
-                },
+                defaults={"method": method, "amount": order.total, "phone_number": phone},
             )
-
-            if not created and payment.status == "paid":
+            if payment.status == "paid":
                 return Response(
                     {"detail": "Payment already completed."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            if payment.status == "processing":
+                return Response(
+                    {"detail": "A payment is already in progress."},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
-            # TODO: integrate real MTN MoMo / Orange Money SDK here
-            # For now, simulate success
-            payment.status = "paid"
-            payment.external_ref = f"MOCK-{order.order_id}"
-            payment.save()
+            payment.status = "processing"
+            payment.method = method
+            payment.phone_number = phone
+            payment.save(update_fields=["status", "method", "phone_number"])
 
-            order.status = "paid_escrow"
-            order.save()
-
-            EscrowEvent.objects.create(
-                order=order,
-                event="held",
+        # --- Phase 2: call Fapshi OUTSIDE the lock ---
+        service = FapshiCollectionService()
+        try:
+            trans_id = service.direct_pay(
                 amount=order.total,
-                note="Payment received. Funds held in escrow.",
+                phone=phone,
+                external_id=str(order.order_id),
+                medium=MEDIUM_MAP[method],
+                user_id=str(request.user.id),
+                message=f"GrabIT order {order.order_id}",
             )
-            payment_confirmed.send(sender=payment.__class__, payment=payment, order=order)
+        except FapshiError as e:
+            payment.status = "failed"
+            payment.save(update_fields=["status"])
+            return Response(
+                {"detail": f"Could not initiate payment: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
-        return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+        payment.external_ref = trans_id
+        payment.save(update_fields=["external_ref"])
+
+        return Response(
+            {
+                "detail": "Payment request sent. Confirm the prompt on your phone.",
+                "transId": trans_id,
+                "status": "processing",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class PayoutListView(generics.ListAPIView):
@@ -82,63 +106,39 @@ class FapshiWebhookView(APIView):
     """
     Receives Fapshi payment notifications.
 
-    Security:
-    - Authenticates via HMAC-SHA256 signature (X-Fapshi-Signature header)
-    - Idempotent: duplicate transIds return 200 immediately without reprocessing
-    - No JWT auth — authenticates via signature alone
+    Security model:
+    - Shared secret in x-wh-secret header (not HMAC — Fapshi does not sign bodies).
+    - Every webhook is re-verified via GET /payment-status before any state change.
+    - Idempotency key is "<transId>:<verified_status>" so a status change is only
+      applied once even if Fapshi fires the webhook multiple times.
     """
     authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        # 1. Verify HMAC signature
+        # 1. Verify shared secret
         secret = getattr(settings, "FAPSHI_WEBHOOK_SECRET", "")
-        if not secret:
-            return Response({"detail": "Webhook not configured."}, status=500)
+        received = request.headers.get("x-wh-secret", "")
+        if not secret or not hmac.compare_digest(secret, received):
+            return Response({"detail": "Invalid webhook secret."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        raw_body = request.body
-        received_sig = request.headers.get("X-Fapshi-Signature", "")
-        expected_sig = hmac.new(
-            secret.encode(), raw_body, hashlib.sha256
-        ).hexdigest()
-
-        if not hmac.compare_digest(expected_sig, received_sig):
-            return Response({"detail": "Invalid signature."}, status=status.HTTP_401_UNAUTHORIZED)
-
-        # 2. Parse payload
-        payload = request.data
-        trans_id = payload.get("transId") or payload.get("transactionId")
-        event_status = payload.get("status", "")
-
+        trans_id = request.data.get("transId")
         if not trans_id:
-            return Response({"detail": "Missing transId."}, status=400)
+            return Response({"detail": "Missing transId."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 3. Idempotency — insert before processing; reject duplicates
+        # 2. Re-verify with Fapshi — never trust the webhook body.
+        service = FapshiCollectionService()
         try:
-            ProcessedWebhook.objects.create(trans_id=trans_id)
-        except IntegrityError:
-            return Response({"detail": "Already processed."}, status=200)
+            txn = service.get_status(trans_id)
+        except FapshiError:
+            # Can't verify right now; the reconciliation task will catch it.
+            return Response({"detail": "Could not verify; will reconcile later."}, status=status.HTTP_200_OK)
 
-        # 4. Process the event inside a transaction with a row-level lock
-        if event_status == "SUCCESSFUL":
-            with transaction.atomic():
-                try:
-                    payment = Payment.objects.select_for_update().get(external_ref=trans_id)
-                except Payment.DoesNotExist:
-                    return Response({"detail": "Payment not found."}, status=404)
+        # 3. Idempotency — keyed on verified (not claimed) status.
+        dedupe_key = f"{trans_id}:{txn.get('status')}"
+        _, created = ProcessedWebhook.objects.get_or_create(trans_id=dedupe_key)
+        if not created:
+            return Response({"detail": "Already processed."}, status=status.HTTP_200_OK)
 
-                if payment.status != "paid":
-                    payment.status = "paid"
-                    payment.save(update_fields=["status"])
-                    order = Order.objects.select_for_update().get(pk=payment.order_id)
-                    if order.status == "awaiting_payment":
-                        order.status = "paid_escrow"
-                        order.save(update_fields=["status"])
-                        EscrowEvent.objects.create(
-                            order=order,
-                            event="held",
-                            amount=order.total,
-                            note="Payment confirmed via Fapshi webhook. Funds held in escrow.",
-                        )
-
-        return Response({"detail": "OK."}, status=200)
+        settle_payment_from_status(trans_id, txn)
+        return Response({"detail": "OK."}, status=status.HTTP_200_OK)
