@@ -95,6 +95,36 @@ class InitiatePaymentView(APIView):
         )
 
 
+class FapshiPingView(APIView):
+    """Temp diagnostic: tests Fapshi connectivity from Railway's network. Remove after diagnosis."""
+    def get(self, request):
+        import requests as req_lib
+        from django.conf import settings
+        import traceback as tb
+        base = settings.FAPSHI_BASE_URL.rstrip("/")
+        headers = {
+            "apiuser": settings.FAPSHI_API_USER,
+            "apikey": settings.FAPSHI_API_KEY,
+            "Content-Type": "application/json",
+        }
+        try:
+            r = req_lib.post(
+                base + "/direct-pay",
+                json={"amount": 100, "phone": "670000000", "externalId": "PING-TEST-1", "medium": "mobile money"},
+                headers=headers,
+                timeout=30,
+            )
+            return Response({"status": r.status_code, "body": r.json() if r.content else {}})
+        except req_lib.exceptions.SSLError as e:
+            return Response({"error": "SSLError", "detail": str(e)}, status=502)
+        except req_lib.exceptions.Timeout:
+            return Response({"error": "Timeout", "detail": "30s timeout reached"}, status=504)
+        except req_lib.exceptions.ConnectionError as e:
+            return Response({"error": "ConnectionError", "detail": str(e)}, status=502)
+        except Exception as e:
+            return Response({"error": type(e).__name__, "detail": str(e), "trace": tb.format_exc()}, status=500)
+
+
 class PayoutListView(generics.ListAPIView):
     serializer_class = PayoutSerializer
 
