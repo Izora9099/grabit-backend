@@ -76,6 +76,7 @@ class InitiatePaymentView(APIView):
         except FapshiError as e:
             payment.status = "failed"
             payment.save(update_fields=["status"])
+            print(f"FAPSHI ERROR [{order.order_id}] status={e.status_code} payload={e.payload} msg={e}", flush=True)
             return Response(
                 {"detail": f"Could not initiate payment: {e}"},
                 status=status.HTTP_502_BAD_GATEWAY,
