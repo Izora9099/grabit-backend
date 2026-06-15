@@ -1,3 +1,4 @@
+import traceback
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -32,8 +33,12 @@ class OrderListCreateView(generics.ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = CreateOrderSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        order = serializer.save()
-        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+        try:
+            order = serializer.save()
+            return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+        except Exception:
+            print("ORDER CREATION ERROR:", traceback.format_exc(), flush=True)
+            raise
 
 
 class OrderDetailView(generics.RetrieveAPIView):
