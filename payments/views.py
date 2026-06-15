@@ -97,10 +97,46 @@ class InitiatePaymentView(APIView):
 
 class FapshiPingView(APIView):
     """Temp diagnostic: tests Fapshi connectivity from Railway's network. Remove after diagnosis."""
+    permission_classes = [AllowAny]
+
     def get(self, request):
-        import requests as req_lib
+        import socket, ssl, requests as req_lib
         from django.conf import settings
-        import traceback as tb
+
+        result = {}
+
+        # Step 1: DNS resolution (fast)
+        try:
+            ip = socket.gethostbyname("sandbox.fapshi.com")
+            result["dns"] = {"ok": True, "ip": ip}
+        except socket.gaierror as e:
+            result["dns"] = {"ok": False, "error": str(e)}
+            return Response(result)
+
+        # Step 2: TCP connect (3s timeout)
+        try:
+            s = socket.create_connection(("sandbox.fapshi.com", 443), timeout=3)
+            s.close()
+            result["tcp"] = {"ok": True}
+        except Exception as e:
+            result["tcp"] = {"ok": False, "error": str(e)}
+            return Response(result)
+
+        # Step 3: HTTPS GET to base URL (5s timeout, no API call)
+        try:
+            r = req_lib.get("https://sandbox.fapshi.com/", timeout=5)
+            result["https"] = {"ok": True, "status": r.status_code}
+        except req_lib.exceptions.SSLError as e:
+            result["https"] = {"ok": False, "error": "SSLError", "detail": str(e)}
+            return Response(result)
+        except req_lib.exceptions.Timeout:
+            result["https"] = {"ok": False, "error": "Timeout after 5s"}
+            return Response(result)
+        except req_lib.exceptions.ConnectionError as e:
+            result["https"] = {"ok": False, "error": "ConnectionError", "detail": str(e)}
+            return Response(result)
+
+        # Step 4: Actual Fapshi direct-pay call (10s timeout)
         base = settings.FAPSHI_BASE_URL.rstrip("/")
         headers = {
             "apiuser": settings.FAPSHI_API_USER,
@@ -110,19 +146,17 @@ class FapshiPingView(APIView):
         try:
             r = req_lib.post(
                 base + "/direct-pay",
-                json={"amount": 100, "phone": "670000000", "externalId": "PING-TEST-1", "medium": "mobile money"},
+                json={"amount": 100, "phone": "670000000", "externalId": "PING-TEST-2", "medium": "mobile money"},
                 headers=headers,
-                timeout=30,
+                timeout=10,
             )
-            return Response({"status": r.status_code, "body": r.json() if r.content else {}})
-        except req_lib.exceptions.SSLError as e:
-            return Response({"error": "SSLError", "detail": str(e)}, status=502)
+            result["fapshi_api"] = {"ok": r.status_code == 200, "status": r.status_code, "body": r.text[:500]}
         except req_lib.exceptions.Timeout:
-            return Response({"error": "Timeout", "detail": "30s timeout reached"}, status=504)
-        except req_lib.exceptions.ConnectionError as e:
-            return Response({"error": "ConnectionError", "detail": str(e)}, status=502)
+            result["fapshi_api"] = {"ok": False, "error": "Timeout after 10s"}
         except Exception as e:
-            return Response({"error": type(e).__name__, "detail": str(e), "trace": tb.format_exc()}, status=500)
+            result["fapshi_api"] = {"ok": False, "error": type(e).__name__, "detail": str(e)}
+
+        return Response(result)
 
 
 class PayoutListView(generics.ListAPIView):
