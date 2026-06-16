@@ -136,7 +136,14 @@ class FapshiPingView(APIView):
             result["https"] = {"ok": False, "error": "ConnectionError", "detail": str(e)}
             return Response(result)
 
-        # Step 4: Actual Fapshi direct-pay call (10s timeout)
+        # Step 4: Get this server's outbound IP
+        try:
+            ip_r = req_lib.get("https://api.ipify.org?format=json", timeout=5)
+            result["outbound_ip"] = ip_r.json().get("ip", "unknown")
+        except Exception as e:
+            result["outbound_ip"] = f"error: {e}"
+
+        # Step 5: Actual Fapshi direct-pay call (10s timeout)
         base = settings.FAPSHI_BASE_URL.rstrip("/")
         headers = {
             "apiuser": settings.FAPSHI_API_USER,
