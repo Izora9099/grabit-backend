@@ -19,11 +19,20 @@ class FapshiCollectionService:
 
     def __init__(self):
         self.base_url = settings.FAPSHI_BASE_URL.rstrip("/")
-        self.headers = {
-            "apiuser": settings.FAPSHI_API_USER,
-            "apikey": settings.FAPSHI_API_KEY,
-            "Content-Type": "application/json",
-        }
+        proxy_secret = getattr(settings, "FAPSHI_PROXY_SECRET", "")
+        if proxy_secret:
+            # Fapshi credentials live in the Cloudflare Worker; authenticate
+            # to the Worker with this shared secret instead.
+            self.headers = {
+                "X-Proxy-Secret": proxy_secret,
+                "Content-Type": "application/json",
+            }
+        else:
+            self.headers = {
+                "apiuser": settings.FAPSHI_API_USER,
+                "apikey": settings.FAPSHI_API_KEY,
+                "Content-Type": "application/json",
+            }
         self.timeout = 30
 
     def direct_pay(self, *, amount, phone, external_id, medium=None,

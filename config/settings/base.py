@@ -196,6 +196,9 @@ FAPSHI_BASE_URL       = config("FAPSHI_BASE_URL", default="https://sandbox.fapsh
 FAPSHI_API_USER       = config("FAPSHI_API_USER", default="")
 FAPSHI_API_KEY        = config("FAPSHI_API_KEY", default="")
 FAPSHI_WEBHOOK_SECRET = config("FAPSHI_WEBHOOK_SECRET", default="")
+# When set, FAPSHI_BASE_URL should point to the Cloudflare Worker proxy URL.
+# The Worker holds the real Fapshi credentials; Django only sends this secret.
+FAPSHI_PROXY_SECRET   = config("FAPSHI_PROXY_SECRET", default="")
 
 # ── Celery ────────────────────────────────────────────────────────────────────
 CELERY_BROKER_URL     = config("REDIS_URL", default="redis://localhost:6379/0")
