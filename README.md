@@ -2,7 +2,7 @@
 
 REST API for the **GrabIT** marketplace platform — a multi-role e-commerce system for Cameroon with escrow-secured payments, vendor shops, delivery agents, and an admin console.
 
-Built with **Django 4.2** + **Django REST Framework**, deployed on **Railway**, backed by **PostgreSQL on Supabase**.
+Built with **Django 4.2** + **Django REST Framework**, deployed on **Railway**, backed by **Railway-hosted PostgreSQL** and **Cloudflare R2** for file storage.
 
 > **New to the project?** Read the [Infrastructure & Technology Reference](#infrastructure--technology-reference) section before touching any code or configuration.
 
@@ -15,7 +15,7 @@ Built with **Django 4.2** + **Django REST Framework**, deployed on **Railway**, 
    - [System Overview](#system-overview)
    - [Three-Layer Architecture](#three-layer-architecture)
    - [Layer 1 — Django on Railway](#layer-1--django-on-railway)
-   - [Layer 2 — PostgreSQL on Supabase](#layer-2--postgresql-on-supabase)
+   - [Layer 2 — PostgreSQL on Railway](#layer-2--postgresql-on-railway)
    - [Layer 3 — Frontend on Cloudflare Pages](#layer-3--frontend-on-cloudflare-pages)
    - [Python Packages Explained](#python-packages-explained)
    - [Settings Architecture](#settings-architecture)
@@ -44,24 +44,33 @@ Built with **Django 4.2** + **Django REST Framework**, deployed on **Railway**, 
 |---|---|
 | Framework | Django 4.2 (LTS) |
 | API | Django REST Framework 3.15 |
-| Auth | JWT (djangorestframework-simplejwt) — access token in body, refresh in HttpOnly cookie |
+| Auth — JWT | djangorestframework-simplejwt — access token in body, refresh in HttpOnly cookie |
+| Auth — Google OAuth | django-allauth + google-auth |
+| Admin 2FA | django-two-factor-auth + django-axes (brute-force protection) |
+| Password hashing | argon2-cffi |
+| Rate limiting | django-ratelimit |
 | Filtering | django-filter |
 | API Docs | drf-spectacular (OpenAPI 3 / Swagger) |
 | Images | Pillow |
+| File storage | django-storages + boto3 (S3-compatible; Cloudflare R2 in production) |
+| Payment gateway | Fapshi (direct-pay collection; sandbox + live) |
+| Task queue | Celery 5 + Redis |
+| HTTP client | requests (Fapshi API calls) |
 | Config | python-decouple |
 | Database driver | psycopg2-binary |
 | Dev database | SQLite |
-| Production database | PostgreSQL (Supabase) |
+| Production database | PostgreSQL (Railway plugin) |
 | Production server | Gunicorn |
 | Static files | Whitenoise |
 | Backend hosting | Railway |
 | Frontend hosting | Cloudflare Pages |
+| Payment proxy | Cloudflare Worker (proxies Railway → Fapshi) |
 
 ---
 
 ## Infrastructure & Technology Reference
 
-> **Audience:** New backend developers, frontend developers integrating with the API, QA testers, and project managers who need to understand the system. Last updated May 2026.
+> **Audience:** New backend developers, frontend developers integrating with the API, QA testers, and project managers who need to understand the system. Last updated June 2026.
 
 ### System Overview
 
@@ -75,15 +84,26 @@ The system is split into three separate services that work together:
 ┌─────────────────────┐        ┌──────────────────────┐        ┌────────────────────┐
 │                     │        │                       │        │                    │
 │   FRONTEND          │  HTTP  │   DJANGO API          │  SQL   │   POSTGRESQL DB    │
-│   React App         │◄──────►│   Railway             │◄──────►│   Supabase         │
-│   Cloudflare Pages  │        │   (Python server)     │        │   (cloud database) │
+│   React App         │◄──────►│   Railway             │◄──────►│   Railway Postgres │
+│   Cloudflare Pages  │        │   (Python server)     │        │   (plugin)         │
 │                     │        │                       │        │                    │
 └─────────────────────┘        └──────────────────────┘        └────────────────────┘
-     grabit.sale                web-production-fcb36              xtshkfyzmsjlojegqyin
-                                   .up.railway.app                  .supabase.co
+     grabit.sale                web-production-fcb36                 DATABASE_URL
+                                   .up.railway.app               (set in Railway vars)
+                                          │
+                                          │ X-Proxy-Secret
+                                          ▼
+                               ┌──────────────────────┐        ┌────────────────────┐
+                               │                      │        │                    │
+                               │  CLOUDFLARE WORKER   │◄──────►│   FAPSHI API       │
+                               │  (payment proxy)     │        │   live.fapshi.com  │
+                               │                      │        │                    │
+                               └──────────────────────┘        └────────────────────┘
+                               grab-it.ndifonlemuel               apiuser + apikey
+                                 .workers.dev                    stored in the Worker
 ```
 
-**In plain English:** The frontend is the visual interface users see. Django is the brain — it receives requests, applies business rules, and returns data. Supabase hosts the actual database where all data is stored permanently.
+**In plain English:** The frontend is the visual interface users see. Django is the brain — it receives requests, applies business rules, and returns data. Railway hosts the Django application and PostgreSQL database. For payments, Django calls a Cloudflare Worker instead of Fapshi directly; the Worker holds the Fapshi API credentials and forwards requests, working around Railway's outbound connectivity constraints with Fapshi.
 
 ### Three-Layer Architecture
 
@@ -93,7 +113,8 @@ Each service has a different job and different scaling needs:
 |---|---|---|---|
 | **Frontend** | What users see and interact with | Cloudflare Pages | React + TypeScript |
 | **API Server** | Business logic, authentication, data processing | Railway | Django (Python) |
-| **Database** | Permanent data storage | Supabase | PostgreSQL |
+| **Database** | Permanent data storage | Railway (PostgreSQL plugin) | PostgreSQL |
+| **File Storage** | Product images and KYC documents | Cloudflare R2 | S3-compatible object storage |
 
 Separating them means you can update, scale, or replace any one layer without touching the others.
 
@@ -120,26 +141,18 @@ python manage.py migrate --noinput && gunicorn config.wsgi --log-file -
 
 **SSL / HTTPS:** Railway terminates HTTPS at the proxy level and forwards plain HTTP internally. Django's `SECURE_SSL_REDIRECT` is set to `False` to prevent an infinite redirect loop. `SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')` is set so Django still recognises requests as secure and keeps `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` functioning correctly.
 
-### Layer 2 — PostgreSQL on Supabase
+### Layer 2 — PostgreSQL on Railway
 
 **PostgreSQL** (often called "Postgres") is the world's most advanced open-source relational database. A relational database stores data in tables with rows and columns, and tables can be linked through relationships. GrabIT requires PostgreSQL for:
 
 - **ACID compliance** — every financial transaction is guaranteed to complete fully or not at all. No partial writes that could corrupt escrow balances.
 - **Relational data model** — orders link to buyers, vendors, agents, and payments in a web of relationships.
-- **Row-Level Security (RLS)** — PostgreSQL can restrict which rows a user can see at the database level, not just the application level.
 
-**Supabase** is a cloud platform that hosts PostgreSQL databases and wraps them with useful tools — a visual dashboard, backups, and RLS support. Django connects directly to the PostgreSQL database using standard connection strings, not Supabase's JavaScript client library.
+**Railway's PostgreSQL plugin** provisions a managed PostgreSQL database alongside the Django service inside the same Railway project. Railway automatically injects a `DATABASE_URL` environment variable that Django reads via `dj-database-url`. This keeps all infrastructure — web server, task worker, and database — in a single project with shared networking and one billing dashboard.
 
-**Two connection modes:**
+**`conn_max_age=600`** is set in production so Django reuses database connections for up to 10 minutes instead of opening a new one per request, reducing connection overhead under load.
 
-| Mode | Port | Used For | Variable |
-|---|---|---|---|
-| Transaction Pooler | 6543 | All live app queries | `SUPABASE_TRANSACTION_URI` |
-| Direct connection | 5432 | Database migrations only | `SUPABASE_DIRECT_URI` |
-
-The transaction pooler manages a shared pool of database connections that are reused across requests — more efficient for a live application receiving many requests. The direct connection is required when running `manage.py migrate`, which needs full PostgreSQL feature support that pooled connections do not always provide.
-
-**Row Level Security (RLS)** is currently disabled on all tables during the testing phase. Django is the only service accessing the database and enforces its own access controls through DRF permissions. RLS will be enabled with proper policies before the production launch.
+**File storage** uses **Cloudflare R2** (S3-compatible object storage). Product images and KYC documents are uploaded directly to R2 via `django-storages` + `boto3`. Files are served from a custom domain (`R2_PUBLIC_URL`). R2 is configured with `AWS_QUERYSTRING_AUTH=False` so URLs are permanent public links, not time-limited presigned URLs.
 
 ### Layer 3 — Frontend on Cloudflare Pages
 
@@ -174,8 +187,36 @@ All packages are listed in `requirements.txt`.
 
 | Package | What it does |
 |---|---|
-| `psycopg2-binary >=2.9` | Python adapter for PostgreSQL. The driver that allows Django to talk to Supabase. The `-binary` variant includes pre-compiled C extensions so no compilation is needed during deployment. |
-| `dj-database-url >=2.0,<3.0` | Parses a `postgresql://user:pass@host:port/db` URI into the dictionary format Django's `DATABASES` setting requires. Makes it easy to configure the database from a single environment variable. |
+| `psycopg2-binary >=2.9` | Python adapter for PostgreSQL. The driver that allows Django to talk to the Railway PostgreSQL database. The `-binary` variant includes pre-compiled C extensions so no compilation is needed during deployment. |
+| `dj-database-url >=2.0,<3.0` | Parses a `postgresql://user:pass@host:port/db` URI into the dictionary format Django's `DATABASES` setting requires. Railway injects `DATABASE_URL` automatically; this package converts it. |
+
+#### Authentication & Security
+
+| Package | What it does |
+|---|---|
+| `djangorestframework-simplejwt` | Issues and validates JWT access tokens (10 min) and refresh tokens (7 days). Access token in response body; refresh token in `HttpOnly` cookie. |
+| `django-allauth` | Handles Google OAuth flow. Validates the Google ID token, creates or looks up the user account, and integrates with DRF's JWT flow. |
+| `google-auth` | Verifies Google ID tokens against Google's public keys with audience validation. Used inside the custom Google OAuth view. |
+| `django-axes` | Brute-force protection for the admin login. Locks out an IP+username pair after 5 failed attempts for 1 hour. |
+| `django-two-factor-auth` | Enforces TOTP-based two-factor authentication for all Django admin logins. |
+| `argon2-cffi` | Provides the Argon2 password hasher — more resistant to GPU cracking than Django's default PBKDF2. Existing PBKDF2 hashes are upgraded transparently on next login. |
+| `django-ratelimit` | Per-view rate limiting to protect public endpoints from abuse. |
+| `cryptography` | Cryptographic primitives required by allauth's Google OIDC support. |
+
+#### Payments
+
+| Package | What it does |
+|---|---|
+| `requests` | HTTP client used to call the Fapshi API (initiate payment, verify payment status). |
+| `celery` | Distributed task queue. Runs `reconcile_pending_payments` every 5 minutes to self-heal any payments stuck in `processing` state if a webhook was missed. |
+| `redis` | Python client for Redis. Used as both the Celery broker (task queue) and result backend. Railway provides Redis as an add-on plugin. |
+
+#### File Storage
+
+| Package | What it does |
+|---|---|
+| `django-storages` | Pluggable storage backend for Django. In production, it routes all file saves to Cloudflare R2 via the S3-compatible API. |
+| `boto3` | AWS SDK for Python. `django-storages` uses it under the hood to communicate with R2's S3-compatible endpoint. |
 
 #### Configuration & Server
 
@@ -201,7 +242,7 @@ config/settings/
 
 **`development.py`** imports from `base.py` then overrides: `DEBUG=True`, SQLite database (no setup required), and `CORS_ALLOW_ALL_ORIGINS=True` (safe locally, dangerous in production).
 
-**`production.py`** imports from `base.py` then overrides: `DEBUG=False`, Supabase PostgreSQL via `SUPABASE_TRANSACTION_URI`, `CORS_ALLOWED_ORIGINS` restricted to specific frontend domains, Whitenoise for static files, and security headers (`SECURE_BROWSER_XSS_FILTER`, `X_FRAME_OPTIONS`, etc.).
+**`production.py`** imports from `base.py` then overrides: `DEBUG=False`, PostgreSQL via `DATABASE_URL` (injected by Railway), `CORS_ALLOWED_ORIGINS` restricted to specific frontend domains, Cloudflare R2 for file storage, Whitenoise for static files, and security headers (`SECURE_BROWSER_XSS_FILTER`, `SECURE_HSTS_SECONDS`, `X_FRAME_OPTIONS`, etc.).
 
 ### Django Apps — What Each One Does
 
@@ -223,7 +264,7 @@ config/settings/
 
 **`orders` is the most complex app.** It tracks 8 states: `awaiting_payment → paid_escrow → preparing → agent_assigned → picked_up → in_transit → delivered_confirm → completed`. Every transition is logged to the `EscrowEvent` model.
 
-**`payments`** is currently scaffolded. The actual MTN MoMo and Orange Money API integration is the next development phase.
+**`payments`** integrates with **Fapshi** for direct-pay collection (buyer pays via MTN MoMo or Orange Money). All Fapshi API calls are routed through a **Cloudflare Worker proxy** (`FAPSHI_BASE_URL` points to the Worker; `FAPSHI_PROXY_SECRET` authenticates Railway to the Worker; the Worker holds the actual Fapshi credentials). The webhook endpoint at `/api/v1/payments/webhook/fapshi/` verifies each payment against `GET /payment-status/:transId` before transitioning an order to `paid_escrow`. A Celery task (`reconcile_pending_payments`, runs every 5 minutes) self-heals stuck `processing` payments. Vendor/agent payouts are a separate future phase.
 
 ### Authentication System Deep Dive
 
@@ -295,7 +336,7 @@ Example: a buyer fetching their order list — `GET /api/v1/orders/`
 ```
 1. Browser/App
    GET https://web-production-fcb36.up.railway.app/api/v1/orders/
-   Authorization: Token abc123...
+   Authorization: Bearer <access-jwt>...
 
 2. Railway — terminates SSL, forwards plain HTTP to Gunicorn on port 8000
 
@@ -304,20 +345,21 @@ Example: a buyer fetching their order list — `GET /api/v1/orders/`
 4. Django Middleware (in order):
    CorsMiddleware          → checks if origin is in CORS_ALLOWED_ORIGINS
    SecurityMiddleware      → adds security response headers
+   AxesMiddleware          → checks if IP/username is locked out
    AuthenticationMiddleware → loads request.user from session
 
 5. URL Router — /api/v1/orders/ → OrderViewSet
 
-6. DRF Authentication — reads token → queries DB → attaches user to request.user
+6. DRF Authentication — validates JWT signature + expiry (no DB query for access tokens) → attaches user to request.user
 
 7. DRF Permission Check — is user authenticated? Role match? → granted
 
 8. OrderViewSet.list() — runs Order.objects.filter(buyer=request.user)
 
-9. Django ORM → psycopg2 sends SQL to Supabase (port 6543):
+9. Django ORM → psycopg2 sends SQL to Railway PostgreSQL:
    SELECT * FROM orders_order WHERE buyer_id = 42
 
-10. Supabase returns rows → ORM converts to Python Order objects
+10. Railway PostgreSQL returns rows → ORM converts to Python Order objects
 
 11. OrderSerializer — converts objects to dict, validates field types
 
@@ -381,7 +423,7 @@ DEBUG=True
 ALLOWED_HOSTS=localhost,127.0.0.1
 ```
 
-For local development you do not need the Supabase variables — SQLite is used by default.
+For local development you do not need `DATABASE_URL` — SQLite is used by default.
 
 ### 5. Apply database migrations
 
@@ -445,7 +487,7 @@ grabit-backend/
 │   ├── settings/
 │   │   ├── base.py          # Shared settings (all environments)
 │   │   ├── development.py   # Dev overrides (SQLite, permissive CORS)
-│   │   └── production.py    # Prod overrides (Supabase, Whitenoise)
+│   │   └── production.py    # Prod overrides (Railway PostgreSQL, R2, Whitenoise)
 │   ├── urls.py              # Root URL routing + API docs
 │   ├── wsgi.py
 │   └── asgi.py
@@ -484,7 +526,7 @@ Role is set at registration and cannot be changed by the user.
 
 ## Authentication
 
-The API uses **DRF Token Authentication**.
+The API uses **JWT authentication** via `djangorestframework-simplejwt`. For a full breakdown see [Authentication System Deep Dive](#authentication-system-deep-dive).
 
 ### Register
 
@@ -503,11 +545,11 @@ Content-Type: application/json
 }
 ```
 
-Response:
+Response — access token in body, refresh token set as `HttpOnly` cookie:
 ```json
 {
-  "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b",
-  "user": { "id": 1, "email": "user@example.com", "role": "buyer", ... }
+  "access": "<access-jwt>",
+  "user": { "id": 1, "email": "user@example.com", "role": "buyer" }
 }
 ```
 
@@ -523,21 +565,29 @@ Content-Type: application/json
 }
 ```
 
-### Using the token
+### Using the access token
 
 Include this header on every authenticated request:
 
 ```http
-Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b
+Authorization: Bearer <access-jwt>
 ```
 
-> **Frontend note:** The token header uses `Token`, not `Bearer`. Update `src/lib/api.ts` to use `Authorization: Token ${token}`.
+> **Frontend note:** The header prefix is `Bearer`, not `Token`.
+
+### Refreshing the token
+
+```http
+POST /api/v1/auth/token/refresh/
+```
+
+No body needed — the browser sends the `grabit_refresh` HttpOnly cookie automatically. Returns a new `{ "access": "..." }`.
 
 ### Logout
 
 ```http
 POST /api/v1/auth/logout/
-Authorization: Token <token>
+Authorization: Bearer <access-jwt>
 ```
 
 ---
@@ -600,8 +650,9 @@ Query params for product list: `search`, `category`, `city`, `condition`, `min_p
 #### Payments (`/api/v1/payments/`)
 | Method | Path | Description | Auth |
 |---|---|---|---|
-| POST | `initiate/` | Initiate MoMo / Orange payment | Required |
+| POST | `initiate/` | Initiate Fapshi MoMo / Orange payment | Required |
 | GET | `payouts/` | Vendor / agent payout history | Required |
+| POST | `webhook/fapshi/` | Fapshi payment webhook (called by Fapshi, not the frontend) | `x-wh-secret` header |
 
 #### Notifications (`/api/v1/notifications/`)
 | Method | Path | Description | Auth |
@@ -644,10 +695,10 @@ All endpoints are prefixed with `/api/v1`. Base URL in development: `http://loca
 
 Every authenticated request must include:
 ```
-Authorization: Token <token>
+Authorization: Bearer <access-jwt>
 ```
 
-The token is returned by both `/auth/register/` and `/auth/login/`.
+The access token is returned in the body by both `/auth/register/` and `/auth/login/`. The refresh token is set as an `HttpOnly` cookie named `grabit_refresh`.
 
 ---
 
@@ -655,8 +706,8 @@ The token is returned by both `/auth/register/` and `/auth/login/`.
 
 | Method | Endpoint | Notes |
 |---|---|---|
-| POST | `/auth/register/` | Body: `email`, `password`, `first_name`, `last_name`, `role`, `phone`, `city`. Returns `{token, user}` |
-| POST | `/auth/login/` | Body: `email`, `password`. Returns `{token, user}` |
+| POST | `/auth/register/` | Body: `email`, `password`, `first_name`, `last_name`, `role`, `phone`, `city`. Returns `{access, user}`; refresh token set as `HttpOnly` cookie |
+| POST | `/auth/login/` | Body: `email`, `password`. Returns `{access, user}`; refresh token set as `HttpOnly` cookie |
 | GET | `/products/` | Query params: `search`, `category`, `city`, `condition`, `min_price`, `max_price`, `ordering` |
 | GET | `/products/<id>/` | Full product detail |
 | GET | `/products/<id>/reviews/` | All reviews for a product |
@@ -670,7 +721,8 @@ The token is returned by both `/auth/register/` and `/auth/login/`.
 
 | Method | Endpoint | Notes |
 |---|---|---|
-| POST | `/auth/logout/` | Deletes the current token |
+| POST | `/auth/logout/` | Blacklists refresh token and clears the cookie |
+| POST | `/auth/token/refresh/` | Returns new access token using the `grabit_refresh` cookie |
 | GET | `/auth/me/` | Current user profile |
 | PATCH | `/auth/me/` | Update profile fields (`first_name`, `last_name`, `phone`, `city`, `avatar`) |
 | GET | `/auth/me/addresses/` | Saved delivery addresses |
@@ -692,7 +744,7 @@ The token is returned by both `/auth/register/` and `/auth/login/`.
 | GET | `/orders/<order_id>/` | Order detail (e.g. `GR-10001`) |
 | POST | `/orders/<order_id>/confirm/` | Confirm delivery received — completes order and releases escrow |
 | GET / POST | `/orders/messages/` | In-app messages with vendors. POST body: `recipient`, `order`, `body` |
-| POST | `/payments/initiate/` | Trigger payment. Body: `order_id`, `method` (`mtn_momo` / `orange_money` / `bank_transfer`), `phone_number` |
+| POST | `/payments/initiate/` | Trigger Fapshi payment. Body: `order_id`, `method` (`mtn_momo` / `orange_money`), `phone_number` (required, 9-digit Cameroonian number e.g. `670000000`) |
 | GET | `/products/wishlist/` | Wishlist items |
 | POST | `/products/wishlist/` | Add to wishlist. Body: `product` (id) |
 | DELETE | `/products/wishlist/<id>/` | Remove a wishlist item |
@@ -792,7 +844,7 @@ At any point before `completed`, the buyer can file a dispute:
 
 ```http
 POST /api/v1/disputes/
-Authorization: Token <token>
+Authorization: Bearer <access-jwt>
 
 {
   "order": 1,
@@ -828,31 +880,23 @@ Environment variables are stored outside the codebase — never committed to Git
 
 | Variable | Required | Description |
 |---|---|---|
-| `SECRET_KEY` | Always | Long random string used to sign cookies, session tokens, CSRF tokens, and password reset links. Generate with: `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"` |
-| `DEBUG` | Always | `True` locally, must be `False` on Railway. When `True`, Django shows stack traces on error pages. |
+| `SECRET_KEY` | Always | Long random string used to sign cookies, CSRF tokens, and password reset links. Generate with: `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"` |
+| `DEBUG` | Always | `True` locally, must be `False` on Railway. |
 | `ALLOWED_HOSTS` | Always | Comma-separated hostnames Django will respond to (e.g. `localhost,127.0.0.1,web-production-fcb36.up.railway.app`). |
 | `DJANGO_SETTINGS_MODULE` | Production | Set to `config.settings.production` on Railway. Defaults to `development` locally. |
+| `ADMIN_URL_PATH` | Optional | Custom path for the Django admin panel (default: `internal-mgmt`). Obfuscates the admin URL from bots. |
 
 ### CORS
 
 | Variable | Required | Description |
 |---|---|---|
-| `CORS_ALLOWED_ORIGINS` | Production | Comma-separated frontend origins allowed to make cross-origin requests (e.g. `https://grabit.sale,https://grabit.pages.dev`). |
+| `CORS_ALLOWED_ORIGINS` | Production | Comma-separated frontend origins (hardcoded in `production.py` to `https://grabit.sale` and `https://grab-it.ndifonlemuel.workers.dev`). Update this file to add new domains. |
 
-### Supabase Database
-
-| Variable | Required | Description |
-|---|---|---|
-| `SUPABASE_TRANSACTION_URI` | Production | Main database connection string (port 6543). Used for all live queries. |
-| `SUPABASE_DIRECT_URI` | Production | Session-mode connection string (port 5432). Used only when running `manage.py migrate`. |
-
-### Supabase API
+### Database (Railway PostgreSQL)
 
 | Variable | Required | Description |
 |---|---|---|
-| `SUPABASE_URL` | Optional | The Supabase project's REST API URL. Not required for database queries — those use the connection strings above. |
-| `SUPABASE_ANON_KEY` | Optional | Public "anonymous" JWT key. Safe to expose in frontend code. Grants limited access per RLS policies. |
-| `SUPABASE_SERVICE_KEY` | Optional | Secret service role JWT key. Bypasses all RLS. **Never expose in frontend code** — treat like a database root password. |
+| `DATABASE_URL` | Production | Full PostgreSQL connection string. Railway injects this automatically when you add the PostgreSQL plugin to your project. Format: `postgresql://user:pass@host:port/db`. |
 
 ### Cloudflare R2 (media storage)
 
@@ -862,7 +906,36 @@ Environment variables are stored outside the codebase — never committed to Git
 | `R2_ENDPOINT_URL` | Production | `https://<account-id>.r2.cloudflarestorage.com` |
 | `R2_ACCESS_KEY_ID` | Production | R2 API token Access Key ID |
 | `R2_SECRET_ACCESS_KEY` | Production | R2 API token Secret Access Key |
-| `R2_PUBLIC_URL` | Production | Public URL for uploaded files (e.g. `https://media.grabit.sale`) |
+| `R2_PUBLIC_URL` | Production | Public base URL for uploaded files (e.g. `https://media.grabit.sale`) |
+
+### Google OAuth
+
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_OAUTH2_CLIENT_ID` | Optional | OAuth 2.0 client ID from Google Cloud Console. Required for Google login to work. |
+| `GOOGLE_OAUTH2_CLIENT_SECRET` | Optional | OAuth 2.0 client secret. |
+
+### Fapshi (payment gateway)
+
+All Fapshi API calls go through a Cloudflare Worker proxy. There are two operating modes depending on which env vars are set:
+
+**Proxy mode (production)** — `FAPSHI_PROXY_SECRET` is set; `FAPSHI_BASE_URL` points to the Worker. Railway authenticates to the Worker with `X-Proxy-Secret`; the Worker holds the actual Fapshi credentials and forwards the call.
+
+**Direct mode (local dev / sandbox)** — `FAPSHI_PROXY_SECRET` is absent; `FAPSHI_BASE_URL` points directly to Fapshi; `FAPSHI_API_USER` + `FAPSHI_API_KEY` are used.
+
+| Variable | Required | Description |
+|---|---|---|
+| `FAPSHI_BASE_URL` | Always | Proxy mode: Cloudflare Worker URL. Direct mode: `https://sandbox.fapshi.com` locally or `https://live.fapshi.com` for production without proxy. |
+| `FAPSHI_PROXY_SECRET` | Proxy mode | Shared secret that Railway sends as `X-Proxy-Secret` to the Cloudflare Worker. Must match the secret configured in the Worker. When set, `FAPSHI_API_USER`/`FAPSHI_API_KEY` are not needed on Railway (they live in the Worker). |
+| `FAPSHI_API_USER` | Direct mode | "API User" from your Fapshi collection service credentials tab. Not needed when `FAPSHI_PROXY_SECRET` is set. |
+| `FAPSHI_API_KEY` | Direct mode | "API Key" from your Fapshi collection service credentials tab. Not needed when `FAPSHI_PROXY_SECRET` is set. |
+| `FAPSHI_WEBHOOK_SECRET` | Production | Shared secret between Fapshi and your server. Set the same value in the Fapshi dashboard → Webhook → Secret field. Max 50 chars. |
+
+### Redis (Celery)
+
+| Variable | Required | Description |
+|---|---|---|
+| `REDIS_URL` | Production | Redis connection string. Railway provides this automatically when you add the Redis plugin. Used as Celery broker and result backend. |
 
 ### Email (production SMTP)
 
@@ -872,7 +945,7 @@ Environment variables are stored outside the codebase — never committed to Git
 | `EMAIL_PORT` | `587` | SMTP port |
 | `EMAIL_HOST_USER` | — | SMTP username / API key identifier |
 | `EMAIL_HOST_PASSWORD` | — | SMTP password or API key |
-| `DEFAULT_FROM_EMAIL` | `noreply@grabit.sale` | Sender address for all outgoing email |
+| `DEFAULT_FROM_EMAIL` | `noreply@grabit.cm` | Sender address for all outgoing email |
 
 ---
 
@@ -933,11 +1006,17 @@ Before every production deployment, confirm:
 - [ ] `DEBUG=False` is set in Railway variables
 - [ ] `SECRET_KEY` is a strong, unique key (not the development placeholder)
 - [ ] `ALLOWED_HOSTS` includes the Railway domain
-- [ ] `CORS_ALLOWED_ORIGINS` includes the correct frontend URL
-- [ ] `SUPABASE_TRANSACTION_URI` and `SUPABASE_DIRECT_URI` are valid and use the correct database user
-- [ ] Configure SMTP variables for transactional email
-- [ ] Integrate real MTN MoMo / Orange Money SDK in `payments/views.py`
+- [ ] Railway **PostgreSQL plugin** is attached — `DATABASE_URL` injected automatically
+- [ ] Railway **Redis plugin** is attached — `REDIS_URL` injected automatically
 - [ ] `R2_BUCKET_NAME`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_URL` set in Railway variables
+- [ ] `FAPSHI_BASE_URL` set to the Cloudflare Worker URL (proxy mode) or `https://live.fapshi.com` (direct mode)
+- [ ] `FAPSHI_PROXY_SECRET` set in Railway **and** matching the secret in the Cloudflare Worker (proxy mode)
+- [ ] `FAPSHI_WEBHOOK_SECRET` set in Railway variables; same value pasted into Fapshi dashboard → Webhook → Secret
+- [ ] Fapshi dashboard webhook URL set to `https://<your-railway-domain>/api/v1/payments/webhook/fapshi/`
+- [ ] Celery worker service running: `celery -A config worker -l info --concurrency=2`
+- [ ] Celery beat service running: `celery -A config beat -l info`
+- [ ] `GOOGLE_OAUTH2_CLIENT_ID` and `GOOGLE_OAUTH2_CLIENT_SECRET` set (if Google login is active)
+- [ ] SMTP variables configured for transactional email
 
 ---
 
@@ -948,8 +1027,7 @@ Before every production deployment, confirm:
 | **Live API** | `https://web-production-fcb36.up.railway.app/api/v1/` |
 | **API Documentation (Swagger)** | `https://web-production-fcb36.up.railway.app/api/docs/` |
 | **API Documentation (ReDoc)** | `https://web-production-fcb36.up.railway.app/api/redoc/` |
-| **Django Admin Panel** | `https://web-production-fcb36.up.railway.app/admin/` |
-| **Supabase Dashboard** | `https://supabase.com/dashboard/project/xtshkfyzmsjlojegqyin` |
+| **Django Admin Panel** | `https://web-production-fcb36.up.railway.app/internal-mgmt/` |
 | **Railway Dashboard** | `https://railway.app` |
 | **Frontend (Live)** | `https://grabit.sale` |
 
@@ -974,11 +1052,14 @@ Before every production deployment, confirm:
 | **WSGI** | Web Server Gateway Interface. The standard interface between Python web apps and web servers like Gunicorn. |
 | **Virtual Environment** | An isolated Python installation for a specific project. Prevents package conflicts between different projects on the same machine. |
 | **PostgreSQL** | An open-source relational database. The database system GrabIT uses in production. |
-| **Supabase** | A cloud platform that hosts PostgreSQL databases with extra tooling (dashboard, auth, storage, realtime). GrabIT's database provider. |
-| **Railway** | A cloud platform for deploying web applications. GrabIT's backend hosting provider. |
+| **Railway** | A cloud platform for deploying web applications. GrabIT's backend hosting provider. Also provides the PostgreSQL database and Redis as managed plugins within the same project. |
+| **Cloudflare R2** | S3-compatible object storage from Cloudflare. Stores all product images and KYC documents. Served from a custom domain via `R2_PUBLIC_URL`. |
+| **Cloudflare Worker** | A serverless function deployed on Cloudflare's edge network. GrabIT uses one as a payment proxy: it accepts requests from Railway (authenticated with `X-Proxy-Secret`), injects the real Fapshi credentials, and forwards the call to Fapshi. This was introduced because Railway has outbound connectivity constraints when calling Fapshi directly. |
+| **Fapshi** | A Cameroonian payment gateway for MTN MoMo and Orange Money. GrabIT uses the Fapshi collection API for buyer payments, routed through the Cloudflare Worker proxy. |
+| **Celery** | A distributed task queue for Python. Used to run background jobs — currently the `reconcile_pending_payments` task that self-heals stuck payments every 5 minutes. |
 | **Gunicorn** | A Python WSGI HTTP server for production. Handles multiple concurrent requests by running multiple worker processes. |
 | **Whitenoise** | A Python library that lets Django serve its own static files efficiently in production. |
-| **RLS** | Row Level Security. A PostgreSQL feature that restricts which database rows a user can see, enforced at the database level. |
+| **JWT** | JSON Web Token. A self-contained token that encodes user identity and expiry. GrabIT uses short-lived access JWTs (10 min) and long-lived refresh JWTs (7 days). |
 | **XAF** | Central African CFA franc. The currency of Cameroon. All monetary values in GrabIT are stored as integers in XAF. |
 | **KYC** | Know Your Customer. The process of verifying a user's identity. GrabIT requires vendors and delivery agents to submit identity documents before being approved. |
 | **`manage.py`** | Django's command-line utility. Used for running migrations, starting the dev server, creating users, and running management commands. |
@@ -986,4 +1067,4 @@ Before every production deployment, confirm:
 
 ---
 
-*GrabIT · grabit.sale · Internal Team Documentation · May 2026*
+*GrabIT · grabit.sale · Internal Team Documentation · June 2026*
