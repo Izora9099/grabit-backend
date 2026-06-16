@@ -76,7 +76,6 @@ class InitiatePaymentView(APIView):
         except FapshiError as e:
             payment.status = "failed"
             payment.save(update_fields=["status"])
-            print(f"FAPSHI ERROR [{order.order_id}] status={e.status_code} payload={e.payload} msg={e}", flush=True)
             return Response(
                 {"detail": f"Could not initiate payment: {e}"},
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -93,82 +92,6 @@ class InitiatePaymentView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
-
-
-class FapshiPingView(APIView):
-    """Temp diagnostic: tests Fapshi connectivity from Railway's network. Remove after diagnosis."""
-    permission_classes = [AllowAny]
-
-    def get(self, request):
-        import socket, ssl, requests as req_lib
-        from django.conf import settings
-
-        result = {}
-
-        # Step 1: DNS resolution (fast)
-        try:
-            ip = socket.gethostbyname("sandbox.fapshi.com")
-            result["dns"] = {"ok": True, "ip": ip}
-        except socket.gaierror as e:
-            result["dns"] = {"ok": False, "error": str(e)}
-            return Response(result)
-
-        # Step 2: TCP connect (3s timeout)
-        try:
-            s = socket.create_connection(("sandbox.fapshi.com", 443), timeout=3)
-            s.close()
-            result["tcp"] = {"ok": True}
-        except Exception as e:
-            result["tcp"] = {"ok": False, "error": str(e)}
-            return Response(result)
-
-        # Step 3: HTTPS GET to base URL (5s timeout, no API call)
-        try:
-            r = req_lib.get("https://sandbox.fapshi.com/", timeout=5)
-            result["https"] = {"ok": True, "status": r.status_code}
-        except req_lib.exceptions.SSLError as e:
-            result["https"] = {"ok": False, "error": "SSLError", "detail": str(e)}
-            return Response(result)
-        except req_lib.exceptions.Timeout:
-            result["https"] = {"ok": False, "error": "Timeout after 5s"}
-            return Response(result)
-        except req_lib.exceptions.ConnectionError as e:
-            result["https"] = {"ok": False, "error": "ConnectionError", "detail": str(e)}
-            return Response(result)
-
-        # Step 4: Get this server's outbound IP from two services
-        try:
-            ip_r = req_lib.get("https://api.ipify.org?format=json", timeout=5)
-            result["outbound_ip_ipify"] = ip_r.json().get("ip", "unknown")
-        except Exception as e:
-            result["outbound_ip_ipify"] = f"error: {e}"
-        try:
-            ip_r2 = req_lib.get("https://httpbin.org/ip", timeout=5)
-            result["outbound_ip_httpbin"] = ip_r2.json().get("origin", "unknown")
-        except Exception as e:
-            result["outbound_ip_httpbin"] = f"error: {e}"
-
-        # Step 5: Actual Fapshi direct-pay call (10s timeout)
-        base = settings.FAPSHI_BASE_URL.rstrip("/")
-        headers = {
-            "apiuser": settings.FAPSHI_API_USER,
-            "apikey": settings.FAPSHI_API_KEY,
-            "Content-Type": "application/json",
-        }
-        try:
-            r = req_lib.post(
-                base + "/direct-pay",
-                json={"amount": 100, "phone": "670000000", "externalId": "PING-TEST-2", "medium": "mobile money"},
-                headers=headers,
-                timeout=10,
-            )
-            result["fapshi_api"] = {"ok": r.status_code == 200, "status": r.status_code, "body": r.text[:500]}
-        except req_lib.exceptions.Timeout:
-            result["fapshi_api"] = {"ok": False, "error": "Timeout after 10s"}
-        except Exception as e:
-            result["fapshi_api"] = {"ok": False, "error": type(e).__name__, "detail": str(e)}
-
-        return Response(result)
 
 
 class PayoutListView(generics.ListAPIView):
