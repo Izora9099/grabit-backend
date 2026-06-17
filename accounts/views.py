@@ -11,6 +11,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
 from .models import Address, AgentKYCDocument
+
+_ACTIVE_ORDER_STATUSES = {
+    "awaiting_payment", "paid_escrow", "preparing", "agent_assigned",
+    "picked_up", "in_transit", "delivered_confirm", "disputed",
+}
 from .serializers import (
     AddressSerializer, AgentKYCDocumentSerializer, ChangePasswordSerializer,
     GoogleCompleteSerializer, GoogleLoginSerializer, LoginSerializer,
@@ -292,3 +297,89 @@ class EmailVerifyResendView(APIView):
         except BaseException:
             pass  # email failure never blocks the response
         return Response({"detail": "Verification email sent."})
+
+
+# ── Account deletion ──────────────────────────────────────────────────────────
+
+@method_decorator(ratelimit(key="user_or_ip", rate="5/h", method="DELETE", block=True), name="delete")
+class DeleteAccountView(APIView):
+    """
+    Soft-deletes the account: anonymises PII, deactivates it, and blacklists
+    the refresh token. The user row is kept for order record integrity.
+
+    Blocked if there are any active/in-progress orders to prevent fraud
+    (e.g. scamming then vanishing before resolution).
+    """
+    def delete(self, request):
+        user = request.user
+        password = request.data.get("password", "").strip()
+
+        if user.has_usable_password():
+            if not password:
+                return Response(
+                    {"detail": "Your password is required to delete your account."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not user.check_password(password):
+                return Response(
+                    {"detail": "Incorrect password."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        from orders.models import Order
+
+        if Order.objects.filter(buyer=user, status__in=_ACTIVE_ORDER_STATUSES).exists():
+            return Response(
+                {"detail": "You have active orders. Wait for them to complete or be resolved before deleting your account."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            from shops.models import Shop
+            vendor_shops = Shop.objects.filter(owner=user)
+            if vendor_shops.exists() and Order.objects.filter(
+                shop__in=vendor_shops, status__in=_ACTIVE_ORDER_STATUSES
+            ).exists():
+                return Response(
+                    {"detail": "Your shop has active orders. Wait for them to complete or be resolved before deleting your account."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+        except Exception:
+            pass
+
+        # Anonymise PII — row stays for order integrity and fraud traceability
+        user.email = f"deleted_{user.pk}@deleted.invalid"
+        user.first_name = "Deleted"
+        user.last_name = "User"
+        user.phone = ""
+        user.city = ""
+        user.avatar = None
+        user.is_active = False
+        user.set_unusable_password()
+        user.save(update_fields=[
+            "email", "first_name", "last_name", "phone",
+            "city", "avatar", "is_active", "password",
+        ])
+
+        try:
+            from allauth.account.models import EmailAddress
+            EmailAddress.objects.filter(user=user).delete()
+        except Exception:
+            pass
+
+        try:
+            from shops.models import Shop
+            Shop.objects.filter(owner=user).update(status="closed")
+        except Exception:
+            pass
+
+        raw = request.COOKIES.get(_COOKIE)
+        if raw:
+            try:
+                RefreshToken(raw).blacklist()
+            except Exception:
+                pass
+
+        response = Response({"detail": "Account deleted."}, status=status.HTTP_200_OK)
+        response.delete_cookie(_COOKIE)
+        return response
