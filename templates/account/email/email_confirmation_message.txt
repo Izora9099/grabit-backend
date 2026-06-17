@@ -1,0 +1,12 @@
+Hi {% if user.first_name %}{{ user.first_name }}{% else %}there{% endif %},
+
+Welcome to GrabIT — the marketplace built for Cameroon.
+
+Please confirm your email address by clicking the link below. This keeps your account secure and unlocks all features.
+
+  {{ activate_url }}
+
+The link expires in 3 days. If you did not create a GrabIT account, you can safely ignore this email.
+
+— The GrabIT Team
+https://grabit.sale
