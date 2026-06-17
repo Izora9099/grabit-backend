@@ -113,10 +113,26 @@ class OrderStatusUpdateView(APIView):
                     order_id=order_id, shop=request.user.shop,
                 )
             elif role == "agent":
-                order = get_object_or_404(
-                    Order.objects.select_for_update(),
-                    order_id=order_id, agent=request.user,
-                )
+                # For the agent_assigned → picked_up transition, the order may not yet
+                # be assigned to this agent (first-claim model). Allow it if the order
+                # is unclaimed and the agent is eligible (city / delivery_type).
+                try:
+                    order = Order.objects.select_for_update().get(order_id=order_id)
+                except Order.DoesNotExist:
+                    return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+                claiming = order.status == "agent_assigned" and order.agent is None and new_status == "picked_up"
+                if not claiming and order.agent != request.user:
+                    return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+                if claiming:
+                    # Verify this agent is eligible for this order
+                    agent = request.user
+                    if agent.delivery_type == "intra_city" and order.city != agent.city:
+                        return Response(
+                            {"detail": "This order is outside your delivery zone."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
             elif role == "buyer":
                 order = get_object_or_404(
                     Order.objects.select_for_update(),
@@ -130,6 +146,11 @@ class OrderStatusUpdateView(APIView):
 
             old_status = order.status
             order.status = new_status
+
+            # Claim the order: assign agent when they first pick it up
+            if role == "agent" and old_status == "agent_assigned" and new_status == "picked_up":
+                order.agent = request.user
+
             if new_status == "completed":
                 order.escrow_released = True
                 order.save()
@@ -341,17 +362,38 @@ class ConversationDetailView(generics.ListAPIView):
 
 
 class AgentOrdersView(generics.ListAPIView):
-    """Agent sees their assigned deliveries."""
+    """
+    Agent's delivery assignments.
+
+    - For status=agent_assigned: returns unclaimed orders the agent is eligible to accept
+      based on their delivery_type and city.
+    - For all other statuses: returns orders explicitly assigned to this agent.
+    - Supports comma-separated status values: ?status=picked_up,in_transit
+    """
     serializer_class = OrderSerializer
 
     def get_queryset(self):
         user = self.request.user
-        status_filter = self.request.query_params.get("status")
-        qs = Order.objects.select_related(
+        status_filter = self.request.query_params.get("status", "")
+        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+
+        base_qs = Order.objects.select_related(
             "shop", "shop__owner", "buyer", "agent"
-        ).prefetch_related("items__product", "financials").filter(agent=user)
-        if status_filter:
-            qs = qs.filter(status=status_filter)
+        ).prefetch_related("items__product", "financials")
+
+        if statuses == ["agent_assigned"]:
+            # Show unclaimed orders the agent is eligible to accept
+            qs = base_qs.filter(status="agent_assigned", agent__isnull=True)
+            if user.delivery_type == "intra_city":
+                # Only orders in the agent's own city
+                qs = qs.filter(city=user.city)
+            # intercity agents see all unassigned agent_assigned orders
+            return qs
+
+        # For all other statuses, show orders explicitly owned by this agent
+        qs = base_qs.filter(agent=user)
+        if statuses:
+            qs = qs.filter(status__in=statuses)
         return qs
 
 
@@ -359,7 +401,7 @@ class AgentStatsView(APIView):
     """Aggregate stats for the authenticated agent."""
     def get(self, request):
         from django.utils import timezone
-        from django.db.models import Sum
+        from django.db.models import Sum, Avg
         import datetime
 
         user = request.user
@@ -367,7 +409,8 @@ class AgentStatsView(APIView):
         week_start = today - datetime.timedelta(days=today.weekday())
 
         deliveries = Order.objects.filter(agent=user)
-        today_count = deliveries.filter(updated_at__date=today, status="completed").count()
+        today_completed = deliveries.filter(updated_at__date=today, status="completed")
+        today_count = today_completed.count()
         week_orders = deliveries.filter(updated_at__date__gte=week_start)
 
         from payments.models import Payout
@@ -375,11 +418,158 @@ class AgentStatsView(APIView):
             recipient=user, payout_date__gte=week_start
         ).aggregate(total=Sum("amount"))["total"] or 0
 
+        # Today's earnings: sum delivery fees from completed orders today
+        today_earnings = (
+            today_completed
+            .filter(financials__isnull=False)
+            .aggregate(total=Sum("financials__delivery_fee"))["total"] or 0
+        )
+
+        # Acceptance rate: accepted (any status beyond preparing) vs total assigned
+        total_assigned = deliveries.count()
+        declined = deliveries.filter(status="preparing", agent__isnull=True).count()
+        acceptance_rate = round((total_assigned - declined) / total_assigned * 100, 1) if total_assigned else None
+
+        # Average rating from delivery reviews (uses ProductReview rated against completed agent orders)
+        from django.db.models import Q
+        try:
+            from products.models import Review
+            avg_rating = Review.objects.filter(
+                order__agent=user, order__status="completed"
+            ).aggregate(avg=Avg("rating"))["avg"]
+            rating = round(float(avg_rating), 2) if avg_rating is not None else None
+        except Exception:
+            rating = None
+
         return Response({
             "today_deliveries": today_count,
             "week_deliveries": week_orders.count(),
             "week_earnings": week_earnings,
+            "today_earnings": today_earnings,
             "active_assignments": deliveries.filter(
-                status__in=["picked_up", "in_transit", "preparing"]
+                status__in=["agent_assigned", "picked_up", "in_transit"]
             ).count(),
+            "rating": rating,
+            "acceptance_rate": acceptance_rate,
+        })
+
+
+class AgentEarningsView(APIView):
+    """Daily earnings breakdown for the authenticated agent."""
+    def get(self, request):
+        from django.utils import timezone
+        from django.db.models import Sum
+        from django.db.models.functions import TruncDate
+        import datetime
+
+        user = request.user
+        period = request.query_params.get("period", "week")
+        today = timezone.now().date()
+
+        if period == "30d":
+            start = today - datetime.timedelta(days=29)
+        elif period == "month":
+            start = today.replace(day=1)
+        else:  # week
+            start = today - datetime.timedelta(days=today.weekday())
+
+        rows = (
+            Order.objects.filter(agent=user, status="completed", updated_at__date__gte=start)
+            .annotate(date=TruncDate("updated_at"))
+            .values("date")
+            .annotate(
+                deliveries=models.Count("id"),
+                earnings=Sum("financials__delivery_fee"),
+            )
+            .order_by("date")
+        )
+
+        # Fill gaps so every day in the range has an entry
+        data_by_date = {
+            str(r["date"]): {"deliveries": r["deliveries"], "earnings": r["earnings"] or 0}
+            for r in rows
+        }
+        result = []
+        current = start
+        while current <= today:
+            ds = str(current)
+            result.append({
+                "date": ds,
+                "deliveries": data_by_date.get(ds, {}).get("deliveries", 0),
+                "earnings": data_by_date.get(ds, {}).get("earnings", 0),
+            })
+            current += datetime.timedelta(days=1)
+
+        return Response(result)
+
+
+class AgentPayoutsView(generics.ListAPIView):
+    """Weekly payout history for the authenticated agent."""
+    def get(self, request):
+        from payments.models import Payout
+        from rest_framework.response import Response
+
+        payouts = Payout.objects.filter(recipient=request.user).order_by("-payout_date")[:52]
+        result = [
+            {
+                "payout_id": p.payout_id,
+                "amount": p.amount,
+                "status": p.status,
+                "method": p.method,
+                "payout_date": str(p.payout_date),
+            }
+            for p in payouts
+        ]
+        return Response(result)
+
+
+class AgentRatingsView(APIView):
+    """Agent's delivery ratings from buyers."""
+    def get(self, request):
+        from django.db.models import Avg, Count
+
+        user = request.user
+
+        try:
+            from products.models import Review
+            reviews_qs = Review.objects.filter(
+                order__agent=user, order__status="completed"
+            ).select_related("order", "buyer").order_by("-created_at")
+
+            total = reviews_qs.count()
+            avg = reviews_qs.aggregate(avg=Avg("rating"))["avg"]
+
+            breakdown = (
+                reviews_qs.values("rating")
+                .annotate(count=Count("id"))
+                .order_by("rating")
+            )
+            breakdown_map = {b["rating"]: b["count"] for b in breakdown}
+            star_breakdown = [
+                {"stars": s, "count": breakdown_map.get(s, 0), "pct": round(breakdown_map.get(s, 0) / total * 100, 1) if total else 0}
+                for s in [5, 4, 3, 2, 1]
+            ]
+
+            reviews_list = [
+                {
+                    "id": r.id,
+                    "buyer_name": r.buyer_name,
+                    "rating": r.rating,
+                    "text": r.text,
+                    "created_at": r.created_at,
+                    "order_id": r.order.order_id if r.order else None,
+                }
+                for r in reviews_qs[:20]
+            ]
+        except Exception:
+            avg = None
+            total = 0
+            star_breakdown = [{"stars": s, "count": 0, "pct": 0} for s in [5, 4, 3, 2, 1]]
+            reviews_list = []
+
+        return Response({
+            "average": round(float(avg), 2) if avg is not None else None,
+            "total": total,
+            "breakdown": star_breakdown,
+            "reviews": reviews_list,
         })

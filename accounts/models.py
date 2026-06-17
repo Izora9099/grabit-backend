@@ -9,11 +9,21 @@ class User(AbstractUser):
         ("agent", "Agent"),
         ("admin", "Admin"),
     ]
+    DELIVERY_TYPE_CHOICES = [
+        ("intra_city", "Intra-city (same city only)"),
+        ("intercity", "Intercity (across cities)"),
+    ]
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default="buyer")
     phone = models.CharField(max_length=20, blank=True)
     city = models.CharField(max_length=80, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
     is_kyc_verified = models.BooleanField(default=False)
+    delivery_type = models.CharField(
+        max_length=12,
+        choices=DELIVERY_TYPE_CHOICES,
+        default="intra_city",
+        help_text="For agents only: whether they deliver within one city or between cities.",
+    )
 
     def __str__(self):
         return f"{self.username} ({self.role})"
