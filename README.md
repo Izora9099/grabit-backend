@@ -99,7 +99,7 @@ The system is split into three separate services that work together:
                                │  (payment proxy)     │        │   live.fapshi.com  │
                                │                      │        │                    │
                                └──────────────────────┘        └────────────────────┘
-                               grab-it.ndifonlemuel               apiuser + apikey
+                               helloworld.ndifonlemuel            apiuser + apikey
                                  .workers.dev                    stored in the Worker
 ```
 
@@ -998,6 +998,89 @@ All secrets are stored in Railway's Variables panel, not in the codebase. To add
 3. Add or edit variables
 4. Railway will automatically redeploy with the new values
 
+### Cloudflare Worker (payment proxy)
+
+The Worker lives at `https://helloworld.ndifonlemuel.workers.dev` and is managed separately from the Django codebase. It is **not** deployed via Railway or Git — it is deployed directly through the Cloudflare Workers dashboard.
+
+**Why it exists:** Railway uses dynamic outbound IPs that Fapshi rejects. The Worker runs on Cloudflare's edge network and proxies all Fapshi API calls from Django, keeping the real Fapshi credentials off Railway entirely.
+
+**How it works:**
+
+```
+Django (Railway)
+  │  POST /direct-pay
+  │  X-Proxy-Secret: <FAPSHI_PROXY_SECRET>
+  ▼
+Cloudflare Worker
+  │  validates X-Proxy-Secret == env.PROXY_SECRET
+  │  injects env.FAPSHI_API_USER + env.FAPSHI_API_KEY
+  │  forwards to https://live.fapshi.com/direct-pay
+  ▼
+Fapshi Live API
+```
+
+**Worker source code:**
+
+```javascript
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    // Diagnostic: GET /ip-check → returns Cloudflare's outbound IP
+    if (request.method === "GET" && url.pathname === "/ip-check") {
+      const ip = await fetch("https://api.ipify.org?format=json").then(r => r.json());
+      return new Response(JSON.stringify(ip), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // All other routes require the shared secret from Django
+    if (request.headers.get("X-Proxy-Secret") !== env.PROXY_SECRET) {
+      return new Response(JSON.stringify({ message: "Forbidden" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const base = env.FAPSHI_BASE ?? "https://live.fapshi.com";
+    const target = base + url.pathname + url.search;
+
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      "apiuser": env.FAPSHI_API_USER,
+      "apikey": env.FAPSHI_API_KEY,
+    });
+
+    const init = { method: request.method, headers };
+    if (!["GET", "HEAD"].includes(request.method)) {
+      init.body = await request.arrayBuffer();
+    }
+
+    const resp = await fetch(target, init);
+    const body = await resp.text();
+    return new Response(body, {
+      status: resp.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  },
+};
+```
+
+**Worker secrets** (set in Cloudflare dashboard → Workers & Pages → helloworld → Settings → Variables and Secrets):
+
+| Name | Type | Value |
+|---|---|---|
+| `FAPSHI_BASE` | Plain text | `https://live.fapshi.com` |
+| `FAPSHI_API_USER` | Secret | Live API User from Fapshi dashboard |
+| `FAPSHI_API_KEY` | Secret | Live API Key from Fapshi dashboard |
+| `PROXY_SECRET` | Secret | Must match `FAPSHI_PROXY_SECRET` in Railway |
+
+**To update the Worker:** Cloudflare Workers dashboard → helloworld → Edit code → paste updated source → Deploy.
+
+**Logs:** Workers dashboard → helloworld → Logs → Begin log stream, then trigger a request. Useful for debugging Fapshi errors without touching Railway.
+
+---
+
 ### Deployment checklist
 
 Before every production deployment, confirm:
@@ -1030,6 +1113,7 @@ Before every production deployment, confirm:
 | **Django Admin Panel** | `https://web-production-fcb36.up.railway.app/internal-mgmt/` |
 | **Railway Dashboard** | `https://railway.app` |
 | **Frontend (Live)** | `https://grabit.sale` |
+| **Payment Proxy (Cloudflare Worker)** | `https://helloworld.ndifonlemuel.workers.dev` |
 
 ---
 
