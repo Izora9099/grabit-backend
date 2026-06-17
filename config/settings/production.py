@@ -55,8 +55,8 @@ AWS_S3_CUSTOM_DOMAIN     = config('R2_PUBLIC_URL').replace('https://', '')
 
 # Mailtrap Email Sending (production transactional email)
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "live.smtp.mailtrap.io"
-EMAIL_PORT = 587
+EMAIL_HOST = config("MAILTRAP_HOST", default="live.smtp.mailtrap.io")
+EMAIL_PORT = config("MAILTRAP_PORT", default=587, cast=int)
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = config("MAILTRAP_USER", default="")
 EMAIL_HOST_PASSWORD = config("MAILTRAP_PASSWORD", default="")
