@@ -75,8 +75,11 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        email_address = _get_or_create_email_address(user, verified=False)
-        email_address.send_confirmation(request)
+        try:
+            email_address = _get_or_create_email_address(user, verified=False)
+            email_address.send_confirmation(request)
+        except Exception:
+            pass  # email failure never blocks registration
         return _jwt_response(user, http_status=status.HTTP_201_CREATED)
 
 
@@ -88,11 +91,14 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
-        # Backfill: old users have no EmailAddress record; create one and send the
-        # first-ever verification email automatically on their next login.
-        email_address = _get_or_create_email_address(user, verified=False)
-        if not email_address.verified and email_address.emailconfirmation_set.count() == 0:
-            email_address.send_confirmation(request)
+        try:
+            # Backfill: old users have no EmailAddress record; create one and send the
+            # first-ever verification email automatically on their next login.
+            email_address = _get_or_create_email_address(user, verified=False)
+            if not email_address.verified and email_address.emailconfirmation_set.count() == 0:
+                email_address.send_confirmation(request)
+        except Exception:
+            pass  # email failure never blocks login
         return _jwt_response(user)
 
 
