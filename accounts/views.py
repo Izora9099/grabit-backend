@@ -287,5 +287,8 @@ class EmailVerifyResendView(APIView):
         if email_address.verified:
             return Response({"detail": "Your email is already verified."})
 
-        email_address.send_confirmation(request)
+        try:
+            email_address.send_confirmation(request)
+        except BaseException:
+            pass  # email failure never blocks the response
         return Response({"detail": "Verification email sent."})
