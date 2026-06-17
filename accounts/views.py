@@ -17,6 +17,26 @@ from .serializers import (
     RegisterSerializer, UserSerializer,
 )
 
+
+def _get_or_create_email_address(user, verified=False):
+    """Return the allauth EmailAddress for the user, creating it if missing."""
+    from allauth.account.models import EmailAddress
+    obj, _ = EmailAddress.objects.get_or_create(
+        user=user,
+        email=user.email,
+        defaults={"primary": True, "verified": verified},
+    )
+    return obj
+
+
+def _ensure_email_verified_for_google(user):
+    """Mark a Google-auth user's email as verified (Google already confirmed it)."""
+    from allauth.account.models import EmailAddress
+    obj = _get_or_create_email_address(user, verified=True)
+    if not obj.verified:
+        obj.verified = True
+        obj.save(update_fields=["verified"])
+
 _COOKIE = settings.JWT_REFRESH_COOKIE_NAME
 _MAX_AGE = settings.JWT_REFRESH_COOKIE_MAX_AGE
 
@@ -55,6 +75,8 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        email_address = _get_or_create_email_address(user, verified=False)
+        email_address.send_confirmation(request)
         return _jwt_response(user, http_status=status.HTTP_201_CREATED)
 
 
@@ -65,7 +87,13 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        return _jwt_response(serializer.validated_data["user"])
+        user = serializer.validated_data["user"]
+        # Backfill: old users have no EmailAddress record; create one and send the
+        # first-ever verification email automatically on their next login.
+        email_address = _get_or_create_email_address(user, verified=False)
+        if not email_address.verified and email_address.emailconfirmation_set.count() == 0:
+            email_address.send_confirmation(request)
+        return _jwt_response(user)
 
 
 class TokenRefreshView(APIView):
@@ -175,6 +203,9 @@ class GoogleLoginView(APIView):
         user = serializer.validated_data["user"]
         is_new = serializer.validated_data["is_new"]
 
+        # Google already verified the email — mark it so in our records.
+        _ensure_email_verified_for_google(user)
+
         refresh = RefreshToken.for_user(user)
         response = Response({
             "access": str(refresh.access_token),
@@ -197,3 +228,58 @@ class GoogleCompleteView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(UserSerializer(request.user).data)
+
+
+# ── Email verification ────────────────────────────────────────────────────────
+
+@method_decorator(ratelimit(key="ip", rate="5/m", method="POST", block=True), name="post")
+class EmailVerifyConfirmView(APIView):
+    """
+    Frontend POSTs the key from the verification link here.
+    POST /api/accounts/email/verify/confirm/  { "key": "<key from email link>" }
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from allauth.account.models import EmailConfirmationHMAC, EmailConfirmation
+
+        key = request.data.get("key", "").strip()
+        if not key:
+            return Response({"detail": "Verification key is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Try HMAC-based key first (no DB lookup needed)
+        confirmation = EmailConfirmationHMAC.from_key(key)
+
+        # Fall back to DB-stored key (older allauth flow)
+        if confirmation is None:
+            try:
+                confirmation = EmailConfirmation.objects.get(key=key)
+            except EmailConfirmation.DoesNotExist:
+                confirmation = None
+
+        if confirmation is None:
+            return Response({"detail": "Invalid or expired verification link."}, status=status.HTTP_400_BAD_REQUEST)
+
+        confirmation.confirm(request)
+        return Response({"detail": "Email verified successfully."})
+
+
+@method_decorator(ratelimit(key="user_or_ip", rate="3/m", method="POST", block=True), name="post")
+class EmailVerifyResendView(APIView):
+    """
+    Authenticated users can request a fresh verification email.
+    POST /api/accounts/email/verify/resend/
+    """
+
+    def post(self, request):
+        from allauth.account.models import EmailAddress
+        try:
+            email_address = EmailAddress.objects.get(user=request.user, email=request.user.email)
+        except EmailAddress.DoesNotExist:
+            email_address = _get_or_create_email_address(request.user, verified=False)
+
+        if email_address.verified:
+            return Response({"detail": "Your email is already verified."})
+
+        email_address.send_confirmation(request)
+        return Response({"detail": "Verification email sent."})

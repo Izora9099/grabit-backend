@@ -54,13 +54,19 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    email_verified = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
             "id", "email", "first_name", "last_name",
-            "role", "phone", "city", "avatar", "is_kyc_verified",
+            "role", "phone", "city", "avatar", "is_kyc_verified", "email_verified",
         ]
-        read_only_fields = ["id", "role", "is_kyc_verified"]
+        read_only_fields = ["id", "role", "is_kyc_verified", "email_verified"]
+
+    def get_email_verified(self, obj):
+        from allauth.account.models import EmailAddress
+        return EmailAddress.objects.filter(user=obj, verified=True).exists()
 
     def validate_avatar(self, file):
         if file is None:

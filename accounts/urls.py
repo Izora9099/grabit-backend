@@ -8,6 +8,9 @@ urlpatterns = [
     path("login/", views.LoginView.as_view(), name="login"),
     path("logout/", views.LogoutView.as_view(), name="logout"),
     path("token/refresh/", views.TokenRefreshView.as_view(), name="token-refresh"),
+    # Email verification
+    path("email/verify/confirm/", views.EmailVerifyConfirmView.as_view(), name="email-verify-confirm"),
+    path("email/verify/resend/", views.EmailVerifyResendView.as_view(), name="email-verify-resend"),
     # Google OAuth
     path("google/", views.GoogleLoginView.as_view(), name="google-login"),
     path("google/complete/", views.GoogleCompleteView.as_view(), name="google-complete"),

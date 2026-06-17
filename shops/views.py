@@ -9,6 +9,7 @@ from .models import Shop, ShopFollow, ShopReview, KYCDocument
 from .serializers import ShopSerializer, ShopCreateSerializer, ShopReviewSerializer, KYCDocumentSerializer
 from products.models import Product
 from products.serializers import ProductListSerializer
+from accounts.permissions import IsEmailVerified
 
 
 class ShopListView(generics.ListAPIView):
@@ -74,6 +75,7 @@ class MyShopView(generics.RetrieveUpdateAPIView):
 
 class MyShopCreateView(generics.CreateAPIView):
     serializer_class = ShopCreateSerializer
+    permission_classes = [IsAuthenticated, IsEmailVerified]
 
 
 class KYCDocumentListCreateView(generics.ListCreateAPIView):
@@ -106,7 +108,9 @@ class ShopReviewListCreateView(generics.ListCreateAPIView):
     serializer_class = ShopReviewSerializer
 
     def get_permissions(self):
-        return [AllowAny()] if self.request.method == "GET" else [IsAuthenticated()]
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated(), IsEmailVerified()]
 
     def get_queryset(self):
         return ShopReview.objects.filter(shop__handle=self.kwargs["handle"])

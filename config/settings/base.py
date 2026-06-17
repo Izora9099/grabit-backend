@@ -170,9 +170,11 @@ LOGIN_URL = "two_factor:login"
 LOGIN_REDIRECT_URL = f"/{config('ADMIN_URL_PATH', default='internal-mgmt')}/"
 
 # ── Allauth ───────────────────────────────────────────────────────────────────
-ACCOUNT_EMAIL_VERIFICATION = "none"
+ACCOUNT_EMAIL_VERIFICATION = "optional"   # sends email but does not block login
 ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+ACCOUNT_ADAPTER = "accounts.adapter.AccountAdapter"
+FRONTEND_URL = config("FRONTEND_URL", default="https://grabit.sale")
 
 SOCIALACCOUNT_PROVIDERS = {
     "google": {

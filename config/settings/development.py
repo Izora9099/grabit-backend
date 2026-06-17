@@ -34,8 +34,14 @@ else:
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# Print emails to the console instead of sending them
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Mailtrap — reads same credentials as production so local dev sends real emails
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = config("MAILTRAP_HOST", default="live.smtp.mailtrap.io")
+EMAIL_PORT = config("MAILTRAP_PORT", default=587, cast=int)
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = config("MAILTRAP_USER", default="")
+EMAIL_HOST_PASSWORD = config("MAILTRAP_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@grabit.sale")
 
 # Refresh cookie does not need Secure flag in local dev (no HTTPS)
 JWT_REFRESH_COOKIE_SECURE = False
