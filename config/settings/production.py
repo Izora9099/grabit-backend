@@ -61,6 +61,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = config("MAILTRAP_USER", default="")
 EMAIL_HOST_PASSWORD = config("MAILTRAP_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@grabit.sale")
+EMAIL_TIMEOUT = 10  # fail fast before gunicorn's 60s worker timeout kills the process
 
 # ── Security hardening ────────────────────────────────────────────────────────
 SECURE_BROWSER_XSS_FILTER = True

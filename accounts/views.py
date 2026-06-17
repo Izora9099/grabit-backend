@@ -78,7 +78,7 @@ class RegisterView(generics.CreateAPIView):
         try:
             email_address = _get_or_create_email_address(user, verified=False)
             email_address.send_confirmation(request)
-        except Exception:
+        except BaseException:
             pass  # email failure never blocks registration
         return _jwt_response(user, http_status=status.HTTP_201_CREATED)
 
@@ -97,7 +97,7 @@ class LoginView(APIView):
             email_address = _get_or_create_email_address(user, verified=False)
             if not email_address.verified and email_address.emailconfirmation_set.count() == 0:
                 email_address.send_confirmation(request)
-        except Exception:
+        except BaseException:
             pass  # email failure never blocks login
         return _jwt_response(user)
 
