@@ -458,7 +458,7 @@ class AgentEarningsView(APIView):
     """Daily earnings breakdown for the authenticated agent."""
     def get(self, request):
         from django.utils import timezone
-        from django.db.models import Sum
+        from django.db.models import Sum, Count
         from django.db.models.functions import TruncDate
         import datetime
 
@@ -478,7 +478,7 @@ class AgentEarningsView(APIView):
             .annotate(date=TruncDate("updated_at"))
             .values("date")
             .annotate(
-                deliveries=models.Count("id"),
+                deliveries=Count("id"),
                 earnings=Sum("financials__delivery_fee"),
             )
             .order_by("date")
