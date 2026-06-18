@@ -6,6 +6,8 @@ urlpatterns = [
     path("my/", views.MyShopView.as_view(), name="my-shop"),
     path("my/create/", views.MyShopCreateView.as_view(), name="my-shop-create"),
     path("my/kyc/", views.KYCDocumentListCreateView.as_view(), name="kyc"),
+    path("my/kyc/submit/", views.KYCSubmitView.as_view(), name="kyc-submit"),
+    path("my/kyc/<int:pk>/", views.KYCDocumentDetailView.as_view(), name="kyc-detail"),
     path("followed/", views.FollowedShopsView.as_view(), name="followed-shops"),
     # slug routes MUST come after all fixed "my/" routes
     path("<slug:handle>/follow/", views.ShopFollowView.as_view(), name="shop-follow"),

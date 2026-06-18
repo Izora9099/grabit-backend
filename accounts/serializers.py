@@ -107,8 +107,8 @@ class AddressSerializer(serializers.ModelSerializer):
 class AgentKYCDocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentKYCDocument
-        fields = ["id", "doc_type", "label", "file", "status", "reviewed_at", "created_at"]
-        read_only_fields = ["id", "status", "reviewed_at", "created_at"]
+        fields = ["id", "doc_type", "label", "file", "status", "rejection_note", "reviewed_at", "created_at"]
+        read_only_fields = ["id", "status", "rejection_note", "reviewed_at", "created_at"]
 
     def validate_file(self, file):
         if file is None:

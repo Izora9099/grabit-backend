@@ -81,6 +81,7 @@ class MyShopCreateView(generics.CreateAPIView):
 class KYCDocumentListCreateView(generics.ListCreateAPIView):
     serializer_class = KYCDocumentSerializer
     pagination_class = None
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def _get_shop(self):
         try:
@@ -93,7 +94,37 @@ class KYCDocumentListCreateView(generics.ListCreateAPIView):
         return KYCDocument.objects.filter(shop=self._get_shop())
 
     def perform_create(self, serializer):
-        serializer.save(shop=self._get_shop())
+        serializer.save(shop=self._get_shop(), status="pending")
+
+
+class KYCDocumentDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = KYCDocumentSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        try:
+            return KYCDocument.objects.filter(shop=self.request.user.shop)
+        except Exception:
+            return KYCDocument.objects.none()
+
+
+class KYCSubmitView(APIView):
+    """Vendor submits all uploaded KYC docs for review."""
+    def post(self, request):
+        try:
+            shop = request.user.shop
+        except Exception:
+            return Response({"detail": "No shop found."}, status=status.HTTP_404_NOT_FOUND)
+        if shop.is_verified:
+            return Response({"detail": "Shop is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+        if shop.status == "under_review":
+            return Response({"detail": "Application already under review."}, status=status.HTTP_400_BAD_REQUEST)
+        pending_count = KYCDocument.objects.filter(shop=shop, status="pending").count()
+        if pending_count == 0:
+            return Response({"detail": "No documents uploaded. Please upload at least one document first."}, status=status.HTTP_400_BAD_REQUEST)
+        shop.status = "under_review"
+        shop.save(update_fields=["status"])
+        return Response({"detail": "Submitted for review. Our team will respond within 1–2 business days."})
 
 
 class FollowedShopsView(generics.ListAPIView):

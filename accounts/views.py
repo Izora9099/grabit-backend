@@ -197,6 +197,21 @@ class AgentKYCDetailView(generics.RetrieveUpdateDestroyAPIView):
         return AgentKYCDocument.objects.filter(agent=self.request.user)
 
 
+class AgentKYCSubmitView(APIView):
+    """Agent submits all uploaded KYC docs for review."""
+    def post(self, request):
+        from django.utils import timezone
+        pending = AgentKYCDocument.objects.filter(agent=request.user, status="draft")
+        count = pending.count()
+        if count == 0:
+            return Response(
+                {"detail": "No draft documents to submit. Please upload your documents first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        pending.update(status="pending")
+        return Response({"detail": f"{count} document(s) submitted for review. Our team will respond within 1–2 business days."})
+
+
 # ── Google OAuth ──────────────────────────────────────────────────────────────
 
 @method_decorator(ratelimit(key="ip", rate="10/m", method="POST", block=True), name="post")

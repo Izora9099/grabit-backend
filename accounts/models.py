@@ -49,6 +49,7 @@ class AgentKYCDocument(models.Model):
     label = models.CharField(max_length=120)
     file = models.FileField(upload_to="agent_kyc/", null=True, blank=True)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="draft")
+    rejection_note = models.TextField(blank=True, default="")
     reviewed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

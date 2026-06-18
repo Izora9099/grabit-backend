@@ -195,20 +195,21 @@ class AdminVerificationQueueView(APIView):
     @admin_required
     def get(self, request):
         from shops.models import KYCDocument, Shop
-        from shops.serializers import KYCDocumentSerializer, ShopSerializer
+        from shops.serializers import KYCDocumentSerializer
         pending_shops = Shop.objects.filter(
             status="under_review"
-        ).prefetch_related("kyc_documents")
+        ).select_related("owner").prefetch_related("kyc_documents")
         result = []
         for shop in pending_shops:
-            docs = KYCDocument.objects.filter(shop=shop)
+            docs = KYCDocument.objects.filter(shop=shop, status="pending")
             result.append({
                 "shop_id": shop.id,
                 "shop_name": shop.name,
                 "shop_handle": shop.handle,
-                "owner": shop.owner.username if hasattr(shop, "owner") else "",
-                "submitted_at": shop.created_at.isoformat() if hasattr(shop, "created_at") else "",
-                "documents": KYCDocumentSerializer(docs, many=True).data,
+                "owner": shop.owner.get_full_name() or shop.owner.username,
+                "owner_email": shop.owner.email,
+                "submitted_at": shop.created_at.isoformat(),
+                "documents": KYCDocumentSerializer(docs, many=True, context={"request": request}).data,
             })
         return Response(result)
 
@@ -216,13 +217,25 @@ class AdminVerificationQueueView(APIView):
 class AdminVerifyShopView(APIView):
     @admin_required
     def patch(self, request, shop_id):
-        from shops.models import Shop
-        shop = Shop.objects.get(id=shop_id)
+        from shops.models import Shop, KYCDocument
+        try:
+            shop = Shop.objects.get(id=shop_id)
+        except Shop.DoesNotExist:
+            return Response({"detail": "Shop not found."}, status=404)
         action = request.data.get("action")  # "approve" | "reject"
+        rejection_note = request.data.get("rejection_note", "")
+        if action not in ("approve", "reject"):
+            return Response({"detail": "action must be 'approve' or 'reject'."}, status=400)
+        new_doc_status = "approved" if action == "approve" else "rejected"
+        KYCDocument.objects.filter(shop=shop, status="pending").update(
+            status=new_doc_status,
+            rejection_note=rejection_note if action == "reject" else "",
+            reviewed_at=timezone.now(),
+        )
         if action == "approve":
             shop.status = "active"
             shop.is_verified = True
-        elif action == "reject":
+        else:
             shop.status = "rejected"
         shop.save()
         from shops.serializers import ShopSerializer
@@ -329,7 +342,7 @@ class AdminAgentKYCQueueView(APIView):
     def get(self, request):
         from .models import AgentKYCDocument
         from .serializers import AgentKYCDocumentSerializer
-        pending_docs = AgentKYCDocument.objects.filter(status="pending").select_related("agent")
+        pending_docs = AgentKYCDocument.objects.filter(status="pending").select_related("agent").order_by("created_at")
         result = {}
         for doc in pending_docs:
             uid = doc.agent_id
@@ -338,10 +351,14 @@ class AdminAgentKYCQueueView(APIView):
                     "user_id": uid,
                     "username": doc.agent.username,
                     "email": doc.agent.email,
-                    "full_name": doc.agent.get_full_name(),
+                    "full_name": doc.agent.get_full_name() or doc.agent.username,
+                    "city": doc.agent.city,
+                    "submitted_at": doc.created_at.isoformat(),
                     "documents": [],
                 }
-            result[uid]["documents"].append(AgentKYCDocumentSerializer(doc).data)
+            result[uid]["documents"].append(
+                AgentKYCDocumentSerializer(doc, context={"request": request}).data
+            )
         return Response(list(result.values()))
 
 
@@ -349,15 +366,20 @@ class AdminVerifyAgentView(APIView):
     """Approve or reject an agent's KYC — updates is_kyc_verified on the user."""
     @admin_required
     def patch(self, request, user_id):
-        from django.utils import timezone
         from .models import AgentKYCDocument
-        agent = User.objects.get(pk=user_id, role="agent")
+        try:
+            agent = User.objects.get(pk=user_id, role="agent")
+        except User.DoesNotExist:
+            return Response({"detail": "Agent not found."}, status=404)
         action = request.data.get("action")  # "approve" | "reject"
+        rejection_note = request.data.get("rejection_note", "")
         if action not in ("approve", "reject"):
             return Response({"detail": "action must be 'approve' or 'reject'."}, status=400)
         new_status = "approved" if action == "approve" else "rejected"
         AgentKYCDocument.objects.filter(agent=agent, status="pending").update(
-            status=new_status, reviewed_at=timezone.now()
+            status=new_status,
+            rejection_note=rejection_note if action == "reject" else "",
+            reviewed_at=timezone.now(),
         )
         if action == "approve":
             agent.is_kyc_verified = True

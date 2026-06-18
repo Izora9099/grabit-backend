@@ -19,6 +19,7 @@ _MAGIC = {
     b"RIFF": "WEBP",  # RIFF????WEBP — checked further below
 }
 _MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+_MAX_DIM = 1800  # longest side cap; reduces storage ~4–8× vs phone-native resolution
 
 
 def _detect_format(data: bytes) -> Optional[str]:
@@ -57,6 +58,8 @@ def process_image_upload(file) -> InMemoryUploadedFile:
         img = Image.open(file)  # re-open after verify (verify exhausts the stream)
         if img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGBA" if img.mode in ("RGBA", "LA", "P") else "RGB")
+        if img.width > _MAX_DIM or img.height > _MAX_DIM:
+            img.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
     except Exception:
         raise ValidationError("Could not read the uploaded file as an image.")
 

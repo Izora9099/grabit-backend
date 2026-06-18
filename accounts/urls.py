@@ -21,6 +21,7 @@ urlpatterns = [
     path("me/addresses/", views.AddressListCreateView.as_view(), name="addresses"),
     path("me/addresses/<int:pk>/", views.AddressDetailView.as_view(), name="address-detail"),
     path("me/agent-kyc/", views.AgentKYCListCreateView.as_view(), name="agent-kyc"),
+    path("me/agent-kyc/submit/", views.AgentKYCSubmitView.as_view(), name="agent-kyc-submit"),
     path("me/agent-kyc/<int:pk>/", views.AgentKYCDetailView.as_view(), name="agent-kyc-detail"),
     # Admin dashboard
     path("admin/stats/", admin_views.AdminStatsView.as_view(), name="admin-stats"),
