@@ -248,11 +248,11 @@ config/settings/
 
 | App | Responsibility |
 |---|---|
-| `accounts` | Custom `User` model (with `role`, `phone`, `city`), registration/login, profiles, delivery addresses, admin-only user management and KYC review |
+| `accounts` | Custom `User` model (with `role`, `phone`, `city`, `delivery_type`), registration/login, profiles, delivery addresses, agent KYC documents, account deletion with PII anonymisation, admin-only user management |
 | `products` | Product catalogue, images, reviews (verified purchase only), wishlist |
 | `shops` | Vendor shops, KYC documents, shop following, subscription plan, shop creation workflow |
-| `orders` | Full order lifecycle, `EscrowEvent` audit trail (every state change logged), in-platform messaging |
-| `payments` | MoMo/Orange Money payment records, vendor and agent payout tracking |
+| `orders` | Full order lifecycle, `EscrowEvent` audit trail, in-platform messaging, agent assignment queue, earnings/ratings views |
+| `payments` | Fapshi direct-pay collection, MoMo/Orange Money payment records, vendor and agent payout tracking |
 | `disputes` | Dispute filing, evidence upload, admin resolution with three outcomes |
 | `notifications` | User notification feed, mark-as-read |
 
@@ -261,8 +261,10 @@ config/settings/
 - A vendor must have an approved KYC before their shop goes active
 - Once an order is paid, funds enter escrow — the vendor cannot be paid until the buyer confirms delivery or an admin resolves a dispute
 - `OrderItem` snapshots the price at purchase time, preserving order history if the vendor later changes their price
+- Delivery agents choose `delivery_type` at onboarding: `intra_city` (same city only) or `intercity` (all cities). The assignment queue is filtered accordingly
+- **First-claim assignment:** when a vendor sets status to `agent_assigned`, the order enters a shared pool of unclaimed orders. The first agent to transition it to `picked_up` atomically claims it (`order.agent = request.user` inside `select_for_update()`). Intra-city agents are checked for city eligibility at claim time
 
-**`orders` is the most complex app.** It tracks 8 states: `awaiting_payment → paid_escrow → preparing → agent_assigned → picked_up → in_transit → delivered_confirm → completed`. Every transition is logged to the `EscrowEvent` model.
+**`orders` is the most complex app.** It tracks 12 states: `awaiting_payment → paid_escrow → preparing → agent_assigned → picked_up → in_transit → delivered_confirm → completed`, plus terminal states `cancelled`, `refunded`, `partially_resolved`, and `disputed`. Every transition is logged to the `EscrowEvent` model.
 
 **`payments`** integrates with **Fapshi** for direct-pay collection (buyer pays via MTN MoMo or Orange Money). All Fapshi API calls are routed through a **Cloudflare Worker proxy** (`FAPSHI_BASE_URL` points to the Worker; `FAPSHI_PROXY_SECRET` authenticates Railway to the Worker; the Worker holds the actual Fapshi credentials). The webhook endpoint at `/api/v1/payments/webhook/fapshi/` verifies each payment against `GET /payment-status/:transId` before transitioning an order to `paid_escrow`. A Celery task (`reconcile_pending_payments`, runs every 5 minutes) self-heals stuck `processing` payments. Vendor/agent payouts are a separate future phase.
 
@@ -445,14 +447,39 @@ Use role `admin` when prompted (or update it via the Django admin panel afterwar
 python manage.py seed_data
 ```
 
-This creates sample users, shops, products, and orders so you have realistic data to work with immediately. After seeding, the following test accounts are available — all use the password `Grabit2024!`:
+This creates sample users, shops, products, and orders so you have realistic data to work with immediately. After seeding, the following test accounts are available — all use the password `Grabit2024!`. In production, run the SQL below to mark them as email-verified (the emails are fictional so verification emails won't arrive):
 
-| Role | Email | What you can test |
-|---|---|---|
-| Admin | admin@grabit.sale | Full platform access, dispute resolution, KYC approval |
-| Vendor | (see seed_data output) | Shop management, product listing, order fulfilment |
-| Buyer | (see seed_data output) | Browsing, ordering, dispute filing |
-| Agent | (see seed_data output) | Delivery assignment and status updates |
+```sql
+INSERT INTO account_emailaddress (email, verified, "primary", user_id)
+SELECT u.email, TRUE, TRUE, u.id
+FROM accounts_user u
+WHERE u.email IN (
+  'admin@grabit.cm', 'amina.nji@gmail.com', 'paul.etonde@gmail.com',
+  'claire.mbah@gmail.com', 'boris.ngwa@gmail.com', 'eric.tabi@sonichub.cm',
+  'adele.fonkou@gmail.com', 'jeanpaul.nkeng@gmail.com', 'sophie.abouem@gmail.com',
+  'ndeh.wirba@gmail.com', 'victor.ngum@gmail.com', 'pulsetech.yde@gmail.com',
+  'ecocharge.dla@gmail.com', 'nightglow@gmail.com',
+  'moses.che@grabit.cm', 'diane.fokam@grabit.cm', 'felix.awah@grabit.cm'
+)
+ON CONFLICT (user_id, email) DO UPDATE SET verified = TRUE;
+```
+
+| Role | Email | City | What you can test |
+|---|---|---|---|
+| Admin | `admin@grabit.cm` | Douala | Full platform access, dispute resolution, KYC approval, GMV |
+| Buyer | `amina.nji@gmail.com` | Douala | Orders, wishlist, follows, messages, saved addresses |
+| Buyer | `paul.etonde@gmail.com` | Yaoundé | In-transit order, failed payment, resolved dispute |
+| Buyer | `claire.mbah@gmail.com` | Buea | Open dispute, delivered_confirm awaiting |
+| Buyer | `boris.ngwa@gmail.com` | Douala | Cancelled order with refund |
+| Vendor | `eric.tabi@sonichub.cm` | Douala | SonicHub — verified, growth plan, paid out |
+| Vendor | `adele.fonkou@gmail.com` | Yaoundé | Maison Adèle — verified, premium plan |
+| Vendor | `sophie.abouem@gmail.com` | Douala | Maison du Café — order under dispute |
+| Vendor | `ndeh.wirba@gmail.com` | Bamenda | Atelier Ndeh — starter plan |
+| Vendor | `victor.ngum@gmail.com` | Buea | Mt Cameroon Bikes — failed payout |
+| Vendor | `nightglow@gmail.com` | Douala | NightGlow — suspended shop, rejected KYC |
+| Agent | `moses.che@grabit.cm` | Douala | KYC verified, active + completed deliveries, earnings history |
+| Agent | `diane.fokam@grabit.cm` | Yaoundé | KYC verified, in-transit delivery |
+| Agent | `felix.awah@grabit.cm` | Buea | Newly registered, no deliveries yet |
 
 ### 8. Start the development server
 
@@ -492,7 +519,7 @@ grabit-backend/
 │   ├── wsgi.py
 │   └── asgi.py
 │
-├── accounts/                # User auth, profiles, addresses, admin views
+├── accounts/                # User auth, profiles, addresses, delivery_type, agent KYC, account deletion
 ├── products/                # Product catalog, reviews, wishlist
 ├── shops/                   # Vendor shops, follow system, KYC documents
 ├── orders/                  # Orders, escrow events, in-app messaging
@@ -604,10 +631,13 @@ Interactive docs with try-it-out buttons are at **http://localhost:8000/api/docs
 | POST | `register/` | Create account | Public |
 | POST | `login/` | Get token | Public |
 | POST | `logout/` | Invalidate token | Required |
-| GET/PATCH | `me/` | Current user profile | Required |
+| GET/PATCH | `me/` | Current user profile (includes `delivery_type` for agents) | Required |
 | POST | `me/change-password/` | Change password | Required |
+| DELETE | `me/delete/` | Delete account with PII anonymisation (blocked if active escrow or open dispute) | Required |
 | GET/POST | `me/addresses/` | Delivery addresses | Required |
 | GET/PATCH/DELETE | `me/addresses/<id>/` | Address detail | Required |
+| GET/POST | `me/agent-kyc/` | Agent KYC documents (multipart/form-data) | Agent |
+| GET/PATCH/DELETE | `me/agent-kyc/<id>/` | Single agent KYC document | Agent |
 
 #### Products (`/api/v1/products/`)
 | Method | Path | Description | Auth |
@@ -644,8 +674,11 @@ Query params for product list: `search`, `category`, `city`, `condition`, `min_p
 | POST | `<order_id>/cancel/` | Vendor cancels order (before pickup) | Vendor |
 | POST | `<order_id>/decline/` | Agent declines assignment | Agent |
 | GET/POST | `messages/` | In-app messages | Required |
-| GET | `agent/assignments/` | Agent's deliveries | Agent |
-| GET | `agent/stats/` | Agent earnings & stats | Agent |
+| GET | `agent/assignments/` | Agent delivery queue. `?status=agent_assigned` returns unclaimed pool (filtered by agent city/delivery_type). Comma-separated values supported: `?status=picked_up,in_transit` | Agent |
+| GET | `agent/stats/` | Agent stats: `today_deliveries`, `week_deliveries`, `week_earnings`, `today_earnings`, `active_assignments`, `rating`, `acceptance_rate` | Agent |
+| GET | `agent/earnings/` | Daily earnings breakdown. `?period=week` (default), `30d`, or `month`. Returns array of `{date, deliveries, earnings}` with gaps filled | Agent |
+| GET | `agent/payouts/` | Last 52 agent payouts | Agent |
+| GET | `agent/ratings/` | Agent's delivery ratings: `average`, `total`, `breakdown` (per star), `reviews` (last 20) | Agent |
 
 #### Payments (`/api/v1/payments/`)
 | Method | Path | Description | Auth |
@@ -784,15 +817,20 @@ The access token is returned in the body by both `/auth/register/` and `/auth/lo
 
 | Method | Endpoint | Notes |
 |---|---|---|
-| GET | `/orders/agent/assignments/` | Assigned deliveries. Optional query param: `status` |
-| GET | `/orders/agent/stats/` | Returns `today_deliveries`, `week_deliveries`, `week_earnings`, `active_assignments` |
+| GET | `/orders/agent/assignments/` | Delivery queue. `?status=agent_assigned` returns unclaimed orders eligible for this agent (filtered by `city` for intra-city agents, all cities for intercity). `?status=picked_up,in_transit` returns active jobs (comma-separated). Other statuses return agent-owned orders only. |
+| GET | `/orders/agent/stats/` | Returns `today_deliveries`, `week_deliveries`, `week_earnings`, `today_earnings`, `active_assignments`, `rating` (float or null), `acceptance_rate` (float or null) |
+| GET | `/orders/agent/earnings/` | Daily breakdown. `?period=week` (Mon–today), `30d` (last 30 days), `month` (calendar month). Response: array of `{ date, deliveries, earnings }` with every day in range, zeros where no deliveries |
+| GET | `/orders/agent/payouts/` | Last 52 payouts for this agent |
+| GET | `/orders/agent/ratings/` | `{ average, total, breakdown: [{stars, count, pct}], reviews: [{id, buyer_name, rating, text, created_at, order_id}] }` |
 | GET | `/orders/<order_id>/` | Order detail |
-| PATCH | `/orders/<order_id>/status/` | Advance delivery status. Allowed transitions: `agent_assigned → picked_up`, `picked_up → in_transit`, `in_transit → delivered_confirm` |
+| PATCH | `/orders/<order_id>/status/` | Advance delivery status. `agent_assigned → picked_up` claims the order (first-claim; intra-city zone validated). `picked_up → in_transit`, `in_transit → delivered_confirm` |
 | POST | `/orders/<order_id>/decline/` | Decline assignment — order returns to `preparing` |
 | GET / POST | `/orders/messages/` | In-app messages |
 | GET | `/payments/payouts/` | Earnings / payout history |
-| GET / POST | `/auth/me/agent-kyc/` | Agent KYC documents |
+| GET / PATCH | `/auth/me/` | Profile including `delivery_type` (`intra_city` or `intercity`). PATCH to update city and delivery_type |
+| GET / POST | `/auth/me/agent-kyc/` | Agent KYC documents (multipart/form-data: `doc_type`, `label`, `file`) |
 | GET / PATCH / DELETE | `/auth/me/agent-kyc/<id>/` | Single agent KYC document |
+| DELETE | `/auth/me/delete/` | Delete account |
 
 ---
 
@@ -821,10 +859,10 @@ The access token is returned in the body by both `/auth/register/` and `/auth/lo
 ### Placing an order
 
 1. Buyer creates order → `POST /orders/` — status: `awaiting_payment`
-2. Buyer initiates payment → `POST /payments/initiate/` — status: `paid_escrow`
+2. Buyer initiates payment → `POST /payments/initiate/` — Fapshi sends USSD prompt; status: `paid_escrow` once confirmed
 3. Vendor prepares → `PATCH /orders/<id>/status/` `{"status": "preparing"}`
-4. Vendor assigns agent → `PATCH /orders/<id>/status/` `{"status": "agent_assigned"}`
-5. Agent accepts and picks up → `PATCH /orders/<id>/status/` `{"status": "picked_up"}`
+4. Vendor marks ready → `PATCH /orders/<id>/status/` `{"status": "agent_assigned"}` — order enters the unclaimed agent pool
+5. **First-claim:** first eligible agent to call `PATCH /orders/<id>/status/` `{"status": "picked_up"}` claims the order. Backend atomically sets `order.agent = request.user`. Intra-city agents are rejected if `order.city != agent.city`.
 6. Agent in transit → `PATCH /orders/<id>/status/` `{"status": "in_transit"}`
 7. Agent delivers → `PATCH /orders/<id>/status/` `{"status": "delivered_confirm"}`
 8. Buyer confirms → `POST /orders/<id>/confirm/` — status: `completed`, escrow released
@@ -865,10 +903,19 @@ An admin then resolves it via `PATCH /disputes/<id>/resolve/` with `resolution: 
 
 ### Agent KYC / Onboarding
 
-1. Agent uploads KYC documents → `POST /auth/me/agent-kyc/` (multipart/form-data)
-2. Admin reviews queue → `GET /auth/admin/agent-verification/`
-3. Admin approves → `PATCH /auth/admin/agent-verification/<user_id>/` `{"action": "approve"}`
-4. Agent `is_kyc_verified` set to `true`
+1. Agent registers with `role: agent`
+2. Agent selects delivery type and city → `PATCH /auth/me/` `{"delivery_type": "intra_city", "city": "Douala"}`
+3. Agent uploads KYC documents → `POST /auth/me/agent-kyc/` (multipart/form-data: `doc_type`, `label`, `file`)
+4. Admin reviews queue → `GET /auth/admin/agent-verification/`
+5. Admin approves → `PATCH /auth/admin/agent-verification/<user_id>/` `{"action": "approve"}`
+6. Agent `is_kyc_verified` set to `true`; agent now appears in the assignment dispatch queue
+
+### Agent delivery type dispatch
+
+- `delivery_type = "intra_city"` — agent only sees `agent_assigned` orders where `order.city == agent.city`
+- `delivery_type = "intercity"` — agent sees all unclaimed `agent_assigned` orders regardless of city
+- The delivery type is set by the agent from the Coverage Zone page and stored on `User.delivery_type`
+- Changing city or delivery type takes effect immediately on the next assignments query
 
 ---
 
@@ -937,15 +984,14 @@ All Fapshi API calls go through a Cloudflare Worker proxy. There are two operati
 |---|---|---|
 | `REDIS_URL` | Production | Redis connection string. Railway provides this automatically when you add the Redis plugin. Used as Celery broker and result backend. |
 
-### Email (production SMTP)
+### Email (Mailtrap HTTP API)
 
-| Variable | Default | Description |
+Email is sent via the **Mailtrap HTTP API** (not SMTP). This avoids Railway's SMTP port-blocking issues. All transactional emails (verification, password reset, order notifications) use GrabIT-branded HTML templates.
+
+| Variable | Required | Description |
 |---|---|---|
-| `EMAIL_HOST` | `smtp.sendgrid.net` | SMTP server hostname |
-| `EMAIL_PORT` | `587` | SMTP port |
-| `EMAIL_HOST_USER` | — | SMTP username / API key identifier |
-| `EMAIL_HOST_PASSWORD` | — | SMTP password or API key |
-| `DEFAULT_FROM_EMAIL` | `noreply@grabit.cm` | Sender address for all outgoing email |
+| `MAILTRAP_API_TOKEN` | Production | Mailtrap API token from Settings → API Tokens |
+| `DEFAULT_FROM_EMAIL` | Always | Sender address, e.g. `noreply@grabit.cm` |
 
 ---
 
