@@ -29,7 +29,7 @@ class Shop(models.Model):
     return_policy = models.TextField(blank=True)
     processing_time = models.CharField(max_length=80, blank=True)
     plan = models.CharField(max_length=10, choices=PLAN_CHOICES, default="starter")
-    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="under_review")
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="active")
     is_verified = models.BooleanField(default=False)
     followers_count = models.PositiveIntegerField(default=0)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)

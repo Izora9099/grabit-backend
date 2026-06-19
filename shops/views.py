@@ -109,7 +109,7 @@ class KYCDocumentDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class KYCSubmitView(APIView):
-    """Vendor submits all uploaded KYC docs for review."""
+    """Vendor submits uploaded KYC docs for review."""
     def post(self, request):
         try:
             shop = request.user.shop
@@ -119,6 +119,10 @@ class KYCSubmitView(APIView):
             return Response({"detail": "Shop is already verified."}, status=status.HTTP_400_BAD_REQUEST)
         if shop.status == "under_review":
             return Response({"detail": "Application already under review."}, status=status.HTTP_400_BAD_REQUEST)
+        # On resubmission after rejection, clear old rejected docs so the admin
+        # queue only shows the fresh set of documents.
+        if shop.status == "rejected":
+            KYCDocument.objects.filter(shop=shop, status="rejected").delete()
         pending_count = KYCDocument.objects.filter(shop=shop, status="pending").count()
         if pending_count == 0:
             return Response({"detail": "No documents uploaded. Please upload at least one document first."}, status=status.HTTP_400_BAD_REQUEST)

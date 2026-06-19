@@ -201,14 +201,17 @@ class AdminVerificationQueueView(APIView):
         ).select_related("owner").prefetch_related("kyc_documents")
         result = []
         for shop in pending_shops:
-            docs = KYCDocument.objects.filter(shop=shop, status="pending")
+            docs = KYCDocument.objects.filter(shop=shop, status="pending").order_by("created_at")
+            # Use when the first pending doc was uploaded as the submission timestamp.
+            first_doc = docs.first()
+            submitted_at = first_doc.created_at.isoformat() if first_doc else shop.created_at.isoformat()
             result.append({
                 "shop_id": shop.id,
                 "shop_name": shop.name,
                 "shop_handle": shop.handle,
                 "owner": shop.owner.get_full_name() or shop.owner.username,
                 "owner_email": shop.owner.email,
-                "submitted_at": shop.created_at.isoformat(),
+                "submitted_at": submitted_at,
                 "documents": KYCDocumentSerializer(docs, many=True, context={"request": request}).data,
             })
         return Response(result)
