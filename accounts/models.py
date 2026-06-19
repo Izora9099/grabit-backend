@@ -18,6 +18,7 @@ class User(AbstractUser):
     city = models.CharField(max_length=80, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
     is_kyc_verified = models.BooleanField(default=False)
+    is_available = models.BooleanField(default=False, help_text="Agent online/offline toggle.")
     delivery_type = models.CharField(
         max_length=12,
         choices=DELIVERY_TYPE_CHOICES,
