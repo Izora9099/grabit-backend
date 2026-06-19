@@ -40,6 +40,8 @@ urlpatterns = [
     path("admin/commissions/", admin_views.AdminCommissionsView.as_view(), name="admin-commissions"),
     path("admin/health/", admin_views.AdminHealthView.as_view(), name="admin-health"),
     path("admin/fraud/", admin_views.AdminFraudSignalsView.as_view(), name="admin-fraud"),
+    path("admin/fraud-rules/", admin_views.AdminFraudRulesView.as_view(), name="admin-fraud-rules"),
+    path("admin/user-growth/", admin_views.AdminUserGrowthView.as_view(), name="admin-user-growth"),
     path("admin/agent-verification/", admin_views.AdminAgentKYCQueueView.as_view(), name="admin-agent-kyc-queue"),
     path("admin/agent-verification/<int:user_id>/", admin_views.AdminVerifyAgentView.as_view(), name="admin-verify-agent"),
 ]

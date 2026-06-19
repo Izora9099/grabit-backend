@@ -339,6 +339,70 @@ class AdminFraudSignalsView(APIView):
         })
 
 
+class AdminUserGrowthView(APIView):
+    """Weekly new-user registrations by role — last 12 weeks."""
+    @admin_required
+    def get(self, request):
+        from django.db.models.functions import TruncWeek
+        from django.db.models import Count
+
+        cutoff = timezone.now() - datetime.timedelta(weeks=12)
+
+        def weekly(role: str) -> dict:
+            return {
+                row["week"].strftime("%Y-W%W"): row["count"]
+                for row in User.objects.filter(role=role, date_joined__gte=cutoff)
+                .annotate(week=TruncWeek("date_joined"))
+                .values("week")
+                .annotate(count=Count("id"))
+            }
+
+        buyers = weekly("buyer")
+        vendors = weekly("vendor")
+        agents = weekly("agent")
+        all_weeks = sorted(set(list(buyers) + list(vendors) + list(agents)))
+        return Response([
+            {
+                "week": w,
+                "buyers": buyers.get(w, 0),
+                "vendors": vendors.get(w, 0),
+                "agents": agents.get(w, 0),
+            }
+            for w in all_weeks
+        ])
+
+
+class AdminFraudRulesView(APIView):
+    """Predefined detection rules with live hit counts from payment failure data."""
+    @admin_required
+    def get(self, request):
+        from payments.models import Payment
+        from django.db.models import Count as DCount
+
+        failures = (
+            Payment.objects.filter(status="failed")
+            .values("order__buyer__id")
+            .annotate(failures=DCount("id"))
+        )
+        medium_hits = failures.filter(failures__gte=3, failures__lt=5).count()
+        high_hits = failures.filter(failures__gte=5).count()
+
+        return Response([
+            {
+                "id": "failed-payments-medium",
+                "name": "3–4 failed payments (medium risk)",
+                "is_active": True,
+                "hits_24h": medium_hits,
+            },
+            {
+                "id": "failed-payments-high",
+                "name": "5+ failed payments (high risk)",
+                "is_active": True,
+                "hits_24h": high_hits,
+            },
+        ])
+
+
 class AdminAgentKYCQueueView(APIView):
     """List agents with pending KYC documents."""
     @admin_required
