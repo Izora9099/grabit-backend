@@ -1,11 +1,12 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from products.models import Product
 from .models import EscrowEvent, Order, Message
 from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ConversationSerializer, ReceiptSerializer
 from .signals import order_status_changed
@@ -222,6 +223,10 @@ class OrderCancelView(APIView):
             old_status = order.status
             order.status = "cancelled"
             order.save()
+
+            # Restore stock that was reserved at order creation
+            for item in order.items.all():
+                Product.objects.filter(pk=item.product_id).update(stock=F("stock") + item.quantity)
 
             if was_paid:
                 # Funds were in escrow — log that a refund is due so admin/payment processor can action it

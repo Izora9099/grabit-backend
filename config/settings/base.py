@@ -209,7 +209,11 @@ CELERY_TIMEZONE       = TIME_ZONE
 CELERY_BEAT_SCHEDULE  = {
     "reconcile-pending-payments": {
         "task": "payments.tasks.reconcile_pending_payments",
-        "schedule": 300.0,  # every 5 minutes
+        "schedule": 300.0,   # every 5 minutes
+    },
+    "auto-release-escrow": {
+        "task": "payments.tasks.auto_release_escrow",
+        "schedule": 3600.0,  # every hour
     },
 }
 

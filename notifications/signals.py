@@ -93,6 +93,14 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
             body="Your order has been cancelled. If you were charged, a refund will be processed.",
             href=f"/orders/{order.order_id}",
         )
+        if old_status == "agent_assigned" and order.agent:
+            Notification.objects.create(
+                user=order.agent,
+                type="delivery",
+                title=f"Delivery assignment cancelled: {order.order_id}",
+                body=f"Order {order.order_id} has been cancelled. Your delivery assignment has been removed.",
+                href=f"/orders/{order.order_id}",
+            )
 
 
 @receiver(dispute_filed)
