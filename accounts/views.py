@@ -314,6 +314,137 @@ class EmailVerifyResendView(APIView):
         return Response({"detail": "Verification email sent."})
 
 
+# ── Password reset ───────────────────────────────────────────────────────────
+
+@method_decorator(ratelimit(key="ip", rate="5/m", method="POST", block=True), name="post")
+class PasswordResetRequestView(APIView):
+    """
+    POST { "email": "..." }
+    Always returns 200 to avoid leaking whether an email exists.
+    Sends a password-reset link via Mailtrap if the address is registered.
+    Link format: {FRONTEND_URL}/reset-password?uid=<uid_b64>&token=<token>
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.tokens import default_token_generator
+        from django.core.mail import EmailMultiAlternatives
+        from django.template.loader import render_to_string
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        email = request.data.get("email", "").strip().lower()
+        frontend_url = getattr(settings, "FRONTEND_URL", "https://grabit.sale")
+
+        User = get_user_model()
+        try:
+            user = User.objects.get(email__iexact=email, is_active=True)
+        except User.DoesNotExist:
+            # Return success regardless to avoid email enumeration
+            return Response({"detail": "If that address is registered you will receive a reset link shortly."})
+
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+        context = {
+            "first_name": user.first_name,
+            "reset_url": reset_url,
+            "frontend_url": frontend_url,
+        }
+        html_body = render_to_string("account/email/password_reset_message.html", context)
+        text_body = (
+            f"Hi {user.first_name or 'there'},\n\n"
+            f"Reset your GrabIT password by visiting this link:\n{reset_url}\n\n"
+            "The link expires in 30 minutes.\n\n"
+            "If you didn't request this, ignore this email."
+        )
+
+        msg = EmailMultiAlternatives(
+            subject="Reset your GrabIT password",
+            body=text_body,
+            from_email="GrabIT <no-reply@grabit.sale>",
+            to=[user.email],
+        )
+        msg.attach_alternative(html_body, "text/html")
+        try:
+            msg.send(fail_silently=False)
+        except Exception:
+            pass  # email failure never leaks information
+
+        return Response({"detail": "If that address is registered you will receive a reset link shortly."})
+
+
+@method_decorator(ratelimit(key="ip", rate="10/m", method="POST", block=True), name="post")
+class PasswordResetConfirmView(APIView):
+    """
+    POST { "uid": "...", "token": "...", "new_password": "..." }
+    Validates the Django-generated token, sets the new password, and
+    blacklists any outstanding refresh tokens via simplejwt's blacklist.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.tokens import default_token_generator
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.utils.encoding import force_str
+        from django.utils.http import urlsafe_base64_decode
+
+        uid = request.data.get("uid", "").strip()
+        token = request.data.get("token", "").strip()
+        new_password = request.data.get("new_password", "").strip()
+
+        if not uid or not token or not new_password:
+            return Response(
+                {"detail": "uid, token, and new_password are all required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        User = get_user_model()
+        try:
+            pk = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=pk, is_active=True)
+        except Exception:
+            return Response(
+                {"detail": "Invalid or expired reset link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not default_token_generator.check_token(user, token):
+            return Response(
+                {"detail": "Invalid or expired reset link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_password(new_password, user)
+        except DjangoValidationError as exc:
+            return Response(
+                {"detail": " ".join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+
+        # Invalidate all outstanding refresh tokens for this user
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+            from rest_framework_simplejwt.tokens import RefreshToken as _RefreshToken
+            for ot in OutstandingToken.objects.filter(user=user):
+                try:
+                    _RefreshToken(ot.token).blacklist()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return Response({"detail": "Password reset successfully. You can now sign in."})
+
+
 # ── Account deletion ──────────────────────────────────────────────────────────
 
 @method_decorator(ratelimit(key="user_or_ip", rate="5/h", method="DELETE", block=True), name="delete")
