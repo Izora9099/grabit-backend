@@ -32,4 +32,20 @@ class PayoutSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Payout
-        fields = ["payout_id", "recipient_name", "method", "amount", "status", "payout_date", "created_at"]
+        fields = ["payout_id", "recipient_name", "method", "phone_number", "amount", "status", "payout_date", "created_at"]
+
+
+class PayoutRequestSerializer(serializers.Serializer):
+    amount = serializers.IntegerField(min_value=100)
+    method = serializers.ChoiceField(choices=["mtn_momo", "orange_money"])
+    phone = serializers.CharField()
+
+    def validate_phone(self, value):
+        digits = re.sub(r"\D", "", value)
+        if len(digits) == 12 and digits.startswith("237"):
+            digits = digits[3:]
+        if not re.fullmatch(r"6\d{8}", digits):
+            raise serializers.ValidationError(
+                "Enter a valid 9-digit Cameroonian mobile number (e.g. 6XXXXXXXX)."
+            )
+        return digits

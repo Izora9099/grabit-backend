@@ -2,6 +2,8 @@ import hmac
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Sum
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
@@ -10,10 +12,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from orders.models import Order
+from orders.models import Order, OrderFinancials
 from .models import Payment, Payout, ProcessedWebhook
-from .serializers import InitiatePaymentSerializer, PayoutSerializer
-from .services import FapshiCollectionService, FapshiError, settle_payment_from_status
+from .serializers import InitiatePaymentSerializer, PayoutSerializer, PayoutRequestSerializer
+from .services import FapshiCollectionService, FapshiPayoutService, FapshiError, settle_payment_from_status
 
 MEDIUM_MAP = {"mtn_momo": "mobile money", "orange_money": "orange money"}
 
@@ -99,6 +101,127 @@ class PayoutListView(generics.ListAPIView):
 
     def get_queryset(self):
         return Payout.objects.filter(recipient=self.request.user)
+
+
+PAYOUT_MEDIUM_MAP = {"mtn_momo": "mobile money", "orange_money": "orange money"}
+
+
+class VendorBalanceView(APIView):
+    """Returns the vendor's available payout balance and escrow summary."""
+
+    def get(self, request):
+        if request.user.role != "vendor":
+            return Response({"detail": "Vendors only."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            shop = request.user.shop
+        except Exception:
+            return Response({"available": 0, "in_escrow": 0, "total_paid_out": 0})
+
+        # Total earned: seller_amount from all escrow-released orders
+        earned = (
+            OrderFinancials.objects
+            .filter(order__shop=shop, order__escrow_released=True)
+            .aggregate(total=Sum("seller_amount"))["total"] or 0
+        )
+
+        # In escrow: seller_amount from paid-but-not-yet-released orders
+        in_escrow = (
+            OrderFinancials.objects
+            .filter(order__shop=shop, order__escrow_released=False,
+                    order__status__in=["paid_escrow", "preparing", "agent_assigned",
+                                       "picked_up", "in_transit", "delivered_confirm"])
+            .aggregate(total=Sum("seller_amount"))["total"] or 0
+        )
+
+        # Already paid out or reserved (processing = reserved, not yet confirmed by Fapshi)
+        paid_out = (
+            Payout.objects
+            .filter(recipient=request.user, status__in=["paid", "processing"])
+            .aggregate(total=Sum("amount"))["total"] or 0
+        )
+
+        return Response({
+            "available": max(0, earned - paid_out),
+            "in_escrow": in_escrow,
+            "total_paid_out": paid_out,
+        })
+
+
+class PayoutRequestView(APIView):
+    """Vendor requests a payout — validates balance, calls Fapshi /payout."""
+
+    def post(self, request):
+        if request.user.role != "vendor":
+            return Response({"detail": "Vendors only."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            shop = request.user.shop
+        except Exception:
+            return Response({"detail": "No shop found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not getattr(settings, "FAPSHI_PAYOUT_API_USER", ""):
+            return Response(
+                {"detail": "Payout service not yet activated. Contact support."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        serializer = PayoutRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        amount = serializer.validated_data["amount"]
+        method = serializer.validated_data["method"]
+        phone  = serializer.validated_data["phone"]
+
+        # Recompute available balance under a lock to prevent race conditions
+        with transaction.atomic():
+            earned = (
+                OrderFinancials.objects
+                .filter(order__shop=shop, order__escrow_released=True)
+                .aggregate(total=Sum("seller_amount"))["total"] or 0
+            )
+            paid_out = (
+                Payout.objects
+                .select_for_update()
+                .filter(recipient=request.user, status__in=["paid", "processing"])
+                .aggregate(total=Sum("amount"))["total"] or 0
+            )
+            available = max(0, earned - paid_out)
+
+            if amount > available:
+                return Response(
+                    {"detail": f"Insufficient balance. Available: {available:,} XAF."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            payout = Payout.objects.create(
+                recipient=request.user,
+                method=method,
+                phone_number=phone,
+                amount=amount,
+                status="processing",
+                payout_date=timezone.now().date(),
+            )
+
+        # Call Fapshi outside the lock
+        service = FapshiPayoutService()
+        try:
+            service.payout(
+                amount=amount,
+                phone=phone,
+                medium=PAYOUT_MEDIUM_MAP[method],
+                user_id=str(request.user.id),
+                external_id=payout.payout_id,
+                message=f"GrabIT vendor payout {payout.payout_id}",
+            )
+            payout.status = "paid"
+            payout.save(update_fields=["status"])
+        except FapshiError as e:
+            payout.status = "failed"
+            payout.save(update_fields=["status"])
+            return Response(
+                {"detail": f"Payout failed: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(PayoutSerializer(payout).data, status=status.HTTP_201_CREATED)
 
 
 @method_decorator(csrf_exempt, name="dispatch")

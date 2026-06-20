@@ -202,6 +202,13 @@ FAPSHI_WEBHOOK_SECRET = config("FAPSHI_WEBHOOK_SECRET", default="")
 # The Worker holds the real Fapshi credentials; Django only sends this secret.
 FAPSHI_PROXY_SECRET   = config("FAPSHI_PROXY_SECRET", default="")
 
+# Separate Fapshi service for vendor payouts (disbursement).
+# Fapshi requires a different service from the collection one.
+# Activate by emailing Fapshi support with the payout service's Live API User.
+FAPSHI_PAYOUT_BASE_URL  = config("FAPSHI_PAYOUT_BASE_URL", default="https://live.fapshi.com")
+FAPSHI_PAYOUT_API_USER  = config("FAPSHI_PAYOUT_API_USER", default="")
+FAPSHI_PAYOUT_API_KEY   = config("FAPSHI_PAYOUT_API_KEY", default="")
+
 # ── Celery ────────────────────────────────────────────────────────────────────
 CELERY_BROKER_URL     = config("REDIS_URL", default="redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://localhost:6379/0")

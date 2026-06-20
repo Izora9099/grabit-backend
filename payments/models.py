@@ -40,6 +40,7 @@ class Payout(models.Model):
     payout_id = models.CharField(max_length=20, unique=True)
     recipient = models.ForeignKey(User, on_delete=models.PROTECT, related_name="payouts")
     method = models.CharField(max_length=20)
+    phone_number = models.CharField(max_length=20, blank=True)
     amount = models.PositiveIntegerField()
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="processing")
     payout_date = models.DateField()

@@ -71,6 +71,57 @@ class FapshiCollectionService:
         return data
 
 
+class FapshiPayoutService:
+    """
+    Wrapper around Fapshi's /payout endpoint.
+
+    Requires a separate Fapshi service activated for disbursement
+    (FAPSHI_PAYOUT_API_USER / FAPSHI_PAYOUT_API_KEY). The collection
+    service cannot also disburse — Fapshi enforces this separation.
+    """
+
+    def __init__(self):
+        self.base_url = getattr(settings, "FAPSHI_PAYOUT_BASE_URL", "https://live.fapshi.com").rstrip("/")
+        self.headers = {
+            "apiuser": settings.FAPSHI_PAYOUT_API_USER,
+            "apikey": settings.FAPSHI_PAYOUT_API_KEY,
+            "Content-Type": "application/json",
+        }
+        self.timeout = 30
+
+    def payout(self, *, amount, phone, medium=None, name=None,
+               email=None, user_id=None, external_id=None, message=None):
+        if int(amount) < 100:
+            raise FapshiError("Payout amount must be at least 100 XAF.")
+        body = {"amount": int(amount), "phone": phone}
+        if medium:      body["medium"] = medium
+        if name:        body["name"] = name
+        if email:       body["email"] = email
+        if user_id:     body["userId"] = user_id
+        if external_id: body["externalId"] = external_id
+        if message:     body["message"] = message
+        return self._request("POST", "/payout", json=body)
+
+    def _request(self, method, path, json=None):
+        try:
+            r = requests.request(
+                method, self.base_url + path,
+                json=json, headers=self.headers, timeout=self.timeout,
+            )
+        except requests.RequestException as e:
+            raise FapshiError(f"Network error calling Fapshi payout: {e}")
+        try:
+            data = r.json()
+        except ValueError:
+            data = {}
+        if r.status_code != 200:
+            raise FapshiError(
+                data.get("message", "Fapshi payout request failed"),
+                r.status_code, data,
+            )
+        return data
+
+
 def settle_payment_from_status(trans_id, txn):
     """
     Apply a VERIFIED Fapshi transaction dict to our Payment + Order.
