@@ -51,3 +51,6 @@ test_google_auth.html
 *.dump
 data.json
 
+# ── Local reports (never committed) ──────────────────────────────────────────
+reports/
+
