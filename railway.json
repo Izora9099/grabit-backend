@@ -5,7 +5,7 @@
     "buildCommand": "pip install -r requirements.txt && DJANGO_SETTINGS_MODULE=config.settings.development SECRET_KEY=build-placeholder python manage.py collectstatic --noinput"
   },
   "deploy": {
-    "startCommand": "python manage.py migrate --noinput && gunicorn config.wsgi --workers 3 --timeout 60 --log-file -",
+    "startCommand": "bash start.sh",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
