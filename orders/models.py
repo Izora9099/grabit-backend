@@ -7,9 +7,9 @@ from shops.models import Shop
 
 
 COMMISSION_RATES = {
-    "starter": Decimal("0.05"),
-    "growth": Decimal("0.035"),
-    "premium": Decimal("0.028"),
+    "starter": Decimal("0.07"),
+    "growth":  Decimal("0.05"),
+    "premium": Decimal("0.04"),
 }
 
 

@@ -1,6 +1,9 @@
+import logging
+
 from django.db import transaction
 from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -10,6 +13,8 @@ from products.models import Product
 from .models import EscrowEvent, Order, Message
 from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ConversationSerializer, ReceiptSerializer
 from .signals import order_status_changed
+
+logger = logging.getLogger(__name__)
 
 
 class OrderListCreateView(generics.ListCreateAPIView):
@@ -229,12 +234,50 @@ class OrderCancelView(APIView):
                 Product.objects.filter(pk=item.product_id).update(stock=F("stock") + item.quantity)
 
             if was_paid:
-                # Funds were in escrow — log that a refund is due so admin/payment processor can action it
                 EscrowEvent.objects.create(
                     order=order,
                     event="refunded",
                     amount=order.total,
-                    note="Vendor cancelled order after buyer payment. Refund due to buyer.",
+                    note="Vendor cancelled order after buyer payment. Refund initiated.",
+                )
+
+        # Initiate refund AFTER commit so a Fapshi error can't roll back the
+        # cancellation. Failures surface via Payout row status for manual retry.
+        if was_paid:
+            from payments.models import Payout
+            from payments.services import FapshiError, FapshiPayoutService
+            try:
+                phone = order.payment.phone_number
+            except Exception:
+                phone = None
+
+            if phone:
+                payout = Payout.objects.create(
+                    recipient=order.buyer,
+                    method="mobile money",
+                    phone_number=phone,
+                    amount=order.total,
+                    status="processing",
+                    payout_date=timezone.now().date(),
+                )
+                try:
+                    FapshiPayoutService().payout(
+                        amount=order.total,
+                        phone=phone,
+                        medium="mobile money",
+                        user_id=str(order.buyer_id),
+                        external_id=f"cancel-refund-{order.order_id}",
+                        message=f"GrabIT refund — cancelled order {order.order_id}",
+                    )
+                    payout.status = "paid"
+                except FapshiError as exc:
+                    logger.error("Cancel refund failed for order %s: %s", order.order_id, exc)
+                    payout.status = "failed"
+                payout.save(update_fields=["status"])
+            else:
+                logger.error(
+                    "Cannot initiate cancel refund for order %s: no phone on payment record.",
+                    order.order_id,
                 )
 
         order_status_changed.send(

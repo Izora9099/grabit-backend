@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.core.mail import send_mail
 from django.dispatch import receiver
 
 from orders.signals import (
@@ -26,22 +28,42 @@ STATUS_LABELS = {
 
 @receiver(payment_confirmed)
 def on_payment_confirmed(sender, payment, order, **kwargs):
-    # Notify buyer
+    buyer_body = (
+        f"Your payment of {order.total:,} XAF for order {order.order_id} was received. "
+        "The vendor is now preparing your order."
+    )
+    vendor_body = (
+        f"Order {order.order_id} ({order.total:,} XAF) has been paid. Please start preparing it."
+    )
+
     Notification.objects.create(
         user=order.buyer,
         type="order",
         title="Payment confirmed",
-        body=f"Your payment of {order.total:,} XAF for order {order.order_id} was received. "
-             "The vendor is now preparing your order.",
+        body=buyer_body,
         href=f"/orders/{order.order_id}",
     )
-    # Notify vendor
+    send_mail(
+        subject=f"[GrabIT] Payment confirmed — {order.order_id}",
+        message=buyer_body,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[order.buyer.email],
+        fail_silently=True,
+    )
+
     Notification.objects.create(
         user=order.shop.owner,
         type="order",
         title=f"New paid order: {order.order_id}",
-        body=f"Order {order.order_id} ({order.total:,} XAF) has been paid. Please start preparing it.",
+        body=vendor_body,
         href=f"/orders/{order.order_id}",
+    )
+    send_mail(
+        subject=f"[GrabIT] New paid order: {order.order_id}",
+        message=vendor_body,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[order.shop.owner.email],
+        fail_silently=True,
     )
 
 
@@ -70,19 +92,37 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
         )
 
     if new_status == "completed":
+        buyer_body = "Your order has been marked as completed. Thank you for using GrabIT!"
+        vendor_body = f"Order {order.order_id} is complete. Your payout will be processed shortly."
+
         Notification.objects.create(
             user=order.buyer,
             type="order",
             title=f"Order {order.order_id} complete",
-            body="Your order has been marked as completed. Thank you for using GrabIT!",
+            body=buyer_body,
             href=f"/orders/{order.order_id}",
         )
+        send_mail(
+            subject=f"[GrabIT] Order {order.order_id} completed",
+            message=buyer_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[order.buyer.email],
+            fail_silently=True,
+        )
+
         Notification.objects.create(
             user=order.shop.owner,
             type="order",
             title=f"Order {order.order_id} completed — payment incoming",
-            body=f"Order {order.order_id} is complete. Your payout will be processed shortly.",
+            body=vendor_body,
             href=f"/orders/{order.order_id}",
+        )
+        send_mail(
+            subject=f"[GrabIT] Order {order.order_id} completed — payout incoming",
+            message=vendor_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[order.shop.owner.email],
+            fail_silently=True,
         )
 
     if new_status == "cancelled":
@@ -106,15 +146,24 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
 @receiver(dispute_filed)
 def on_dispute_filed(sender, dispute, **kwargs):
     order = dispute.order
+    vendor_body = (
+        f"A dispute has been filed for order {order.order_id}: {dispute.get_reason_display()}. "
+        "Our team will review it shortly."
+    )
 
-    # Notify the vendor
     Notification.objects.create(
         user=order.shop.owner,
         type="dispute",
         title=f"Dispute filed on order {order.order_id}",
-        body=f"A dispute has been filed for order {order.order_id}: {dispute.get_reason_display()}. "
-             "Our team will review it shortly.",
+        body=vendor_body,
         href=f"/disputes/{dispute.dispute_id}",
+    )
+    send_mail(
+        subject=f"[GrabIT] Dispute filed on order {order.order_id}",
+        message=vendor_body,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[order.shop.owner.email],
+        fail_silently=True,
     )
 
 
@@ -122,12 +171,20 @@ def on_dispute_filed(sender, dispute, **kwargs):
 def on_dispute_resolved(sender, dispute, **kwargs):
     order = dispute.order
     resolution_label = dispute.get_resolution_display()
+    body = f"The dispute for order {order.order_id} has been resolved: {resolution_label}."
 
     for user in [order.buyer, order.shop.owner]:
         Notification.objects.create(
             user=user,
             type="dispute",
             title=f"Dispute {dispute.dispute_id} resolved",
-            body=f"The dispute for order {order.order_id} has been resolved: {resolution_label}.",
+            body=body,
             href=f"/disputes/{dispute.dispute_id}",
+        )
+        send_mail(
+            subject=f"[GrabIT] Dispute {dispute.dispute_id} resolved",
+            message=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=True,
         )

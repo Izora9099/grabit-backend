@@ -1,3 +1,5 @@
+import logging
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -11,6 +13,10 @@ from .models import Dispute
 from .serializers import DisputeSerializer, DisputeCreateSerializer
 from orders.models import EscrowEvent, Order, OrderFinancials
 from orders.signals import dispute_filed, dispute_resolved
+from payments.models import Payout
+from payments.services import FapshiError, FapshiPayoutService
+
+logger = logging.getLogger(__name__)
 
 
 class DisputeListCreateView(generics.ListCreateAPIView):
@@ -143,6 +149,45 @@ class ResolveDisputeView(APIView):
                 )
 
             dispute.save()
+
+        # Initiate money movement AFTER commit so a Fapshi error can't roll
+        # back the dispute resolution. Failures are logged and surfaced via
+        # the Payout row status for manual retry.
+        if resolution in ("refund_buyer", "partial_refund"):
+            refund_amount = order.total if resolution == "refund_buyer" else buyer_amount
+            try:
+                phone = order.payment.phone_number
+            except Exception:
+                phone = None
+
+            if phone:
+                payout = Payout.objects.create(
+                    recipient=order.buyer,
+                    method="mobile money",
+                    phone_number=phone,
+                    amount=refund_amount,
+                    status="processing",
+                    payout_date=timezone.now().date(),
+                )
+                try:
+                    FapshiPayoutService().payout(
+                        amount=refund_amount,
+                        phone=phone,
+                        medium="mobile money",
+                        user_id=str(order.buyer_id),
+                        external_id=f"refund-{order.order_id}",
+                        message=f"GrabIT refund — order {order.order_id}",
+                    )
+                    payout.status = "paid"
+                except FapshiError as exc:
+                    logger.error("Refund payout failed for order %s: %s", order.order_id, exc)
+                    payout.status = "failed"
+                payout.save(update_fields=["status"])
+            else:
+                logger.error(
+                    "Cannot initiate refund for order %s: no phone number on payment record.",
+                    order.order_id,
+                )
 
         dispute_resolved.send(sender=dispute.__class__, dispute=dispute)
         return Response(DisputeSerializer(dispute).data)
