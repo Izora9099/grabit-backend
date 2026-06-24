@@ -1,7 +1,7 @@
 import re
 
 from rest_framework import serializers
-from .models import Payment, Payout
+from .models import Payment, Payout, PlatformConfig
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -33,6 +33,18 @@ class PayoutSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payout
         fields = ["payout_id", "recipient_name", "method", "phone_number", "amount", "status", "payout_date", "created_at"]
+
+
+class PlatformConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlatformConfig
+        fields = [
+            "starter_commission", "growth_commission", "premium_commission",
+            "escrow_release_hours", "dispute_window_hours",
+            "free_shop_max_products", "premium_shop_max_products",
+            "max_images_per_listing", "updated_at",
+        ]
+        read_only_fields = ["updated_at"]
 
 
 class PayoutRequestSerializer(serializers.Serializer):

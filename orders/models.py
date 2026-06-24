@@ -6,15 +6,14 @@ from products.models import Product
 from shops.models import Shop
 
 
-COMMISSION_RATES = {
-    "starter": Decimal("0.07"),
-    "growth":  Decimal("0.05"),
-    "premium": Decimal("0.04"),
-}
-
-
 def get_commission_rate(shop) -> Decimal:
-    return COMMISSION_RATES.get(shop.plan, Decimal("0.05"))
+    from payments.models import PlatformConfig  # late import: payments→orders exists at module level; this avoids circular at load time
+    cfg = PlatformConfig.get()
+    return {
+        "starter": cfg.starter_commission,
+        "growth":  cfg.growth_commission,
+        "premium": cfg.premium_commission,
+    }.get(shop.plan, cfg.growth_commission)
 
 
 class Order(models.Model):

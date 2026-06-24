@@ -8,13 +8,13 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from orders.models import Order, OrderFinancials
-from .models import Payment, Payout, ProcessedWebhook
-from .serializers import InitiatePaymentSerializer, PayoutSerializer, PayoutRequestSerializer
+from .models import Payment, Payout, PlatformConfig, ProcessedWebhook
+from .serializers import InitiatePaymentSerializer, PayoutSerializer, PayoutRequestSerializer, PlatformConfigSerializer
 from .services import FapshiCollectionService, FapshiPayoutService, FapshiError, settle_payment_from_status
 
 MEDIUM_MAP = {"mtn_momo": "mobile money", "orange_money": "orange money"}
@@ -265,3 +265,17 @@ class FapshiWebhookView(APIView):
 
         settle_payment_from_status(trans_id, txn)
         return Response({"detail": "OK."}, status=status.HTTP_200_OK)
+
+
+class PlatformConfigView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        return Response(PlatformConfigSerializer(PlatformConfig.get()).data)
+
+    def patch(self, request):
+        cfg = PlatformConfig.get()
+        serializer = PlatformConfigSerializer(cfg, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from accounts.models import User
 from orders.models import Order
@@ -57,6 +59,34 @@ class Payout(models.Model):
 
     def __str__(self):
         return self.payout_id
+
+
+class PlatformConfig(models.Model):
+    """
+    Singleton (pk=1 only). Holds all live-adjustable platform parameters so the
+    admin dashboard can change them without a code deploy.
+    """
+    starter_commission          = models.DecimalField(max_digits=6, decimal_places=4, default=Decimal("0.07"))
+    growth_commission           = models.DecimalField(max_digits=6, decimal_places=4, default=Decimal("0.05"))
+    premium_commission          = models.DecimalField(max_digits=6, decimal_places=4, default=Decimal("0.04"))
+    escrow_release_hours        = models.PositiveIntegerField(default=72)
+    dispute_window_hours        = models.PositiveIntegerField(default=48)
+    free_shop_max_products      = models.PositiveIntegerField(default=20)
+    premium_shop_max_products   = models.PositiveIntegerField(default=500)
+    max_images_per_listing      = models.PositiveIntegerField(default=8)
+    updated_at                  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Platform configuration"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
 
 
 class ProcessedWebhook(models.Model):

@@ -5,7 +5,7 @@ from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Payment, Payout
+from .models import Payment, Payout, PlatformConfig
 from .services import FapshiCollectionService, FapshiError, FapshiPayoutService, settle_payment_from_status
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,8 @@ def auto_release_escrow():
     from orders.models import EscrowEvent, Order
     from orders.signals import order_status_changed
 
-    cutoff = timezone.now() - timedelta(hours=72)
+    hours = PlatformConfig.get().escrow_release_hours
+    cutoff = timezone.now() - timedelta(hours=hours)
     candidates = list(
         Order.objects
         .filter(status="delivered_confirm", updated_at__lt=cutoff, escrow_released=False)
@@ -45,7 +46,7 @@ def auto_release_escrow():
                 order=order,
                 event="released",
                 amount=order.total,
-                note="Escrow auto-released after 72-hour buyer confirmation window.",
+                note=f"Escrow auto-released after {hours}-hour buyer confirmation window.",
             )
         order_status_changed.send(
             sender=Order,
