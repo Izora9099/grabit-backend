@@ -1,5 +1,9 @@
+import logging
+
 from django.conf import settings
 from django.utils.decorators import method_decorator
+
+logger = logging.getLogger(__name__)
 from django_ratelimit.decorators import ratelimit
 from rest_framework import generics, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -370,8 +374,8 @@ class PasswordResetRequestView(APIView):
         msg.attach_alternative(html_body, "text/html")
         try:
             msg.send(fail_silently=False)
-        except Exception:
-            pass  # email failure never leaks information
+        except Exception as exc:
+            logger.warning("Password reset email failed for user %s: %s", user.pk, exc)
 
         return Response({"detail": "If that address is registered you will receive a reset link shortly."})
 
@@ -437,10 +441,10 @@ class PasswordResetConfirmView(APIView):
             for ot in OutstandingToken.objects.filter(user=user):
                 try:
                     _RefreshToken(ot.token).blacklist()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as exc:
+                    logger.warning("Could not blacklist token %s for user %s: %s", ot.pk, user.pk, exc)
+        except Exception as exc:
+            logger.warning("Token blacklist unavailable after password reset for user %s: %s", user.pk, exc)
 
         return Response({"detail": "Password reset successfully. You can now sign in."})
 
@@ -490,8 +494,8 @@ class DeleteAccountView(APIView):
                     {"detail": "Your shop has active orders. Wait for them to complete or be resolved before deleting your account."},
                     status=status.HTTP_409_CONFLICT,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Could not check active vendor orders for user %s during account deletion: %s", user.pk, exc)
 
         # Anonymise PII — row stays for order integrity and fraud traceability
         user.email = f"deleted_{user.pk}@deleted.invalid"
@@ -510,21 +514,21 @@ class DeleteAccountView(APIView):
         try:
             from allauth.account.models import EmailAddress
             EmailAddress.objects.filter(user=user).delete()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Failed to delete EmailAddress records for user %s: %s", user.pk, exc)
 
         try:
             from shops.models import Shop
             Shop.objects.filter(owner=user).update(status="closed")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Failed to close shops for deleted user %s: %s", user.pk, exc)
 
         raw = request.COOKIES.get(_COOKIE)
         if raw:
             try:
                 RefreshToken(raw).blacklist()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Could not blacklist refresh token on account deletion for user %s: %s", user.pk, exc)
 
         response = Response({"detail": "Account deleted."}, status=status.HTTP_200_OK)
         response.delete_cookie(_COOKIE)
