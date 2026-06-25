@@ -125,6 +125,16 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
             fail_silently=True,
         )
 
+    if new_status == "preparing" and old_status == "agent_assigned":
+        # Agent declined — notify vendor so they can reassign
+        Notification.objects.create(
+            user=order.shop.owner,
+            type="delivery",
+            title=f"Agent declined order {order.order_id}",
+            body=f"The assigned agent declined order {order.order_id}. Please reassign a delivery agent.",
+            href=f"/orders/{order.order_id}",
+        )
+
     if new_status == "cancelled":
         Notification.objects.create(
             user=order.buyer,

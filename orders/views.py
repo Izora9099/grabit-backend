@@ -306,6 +306,13 @@ class AgentDeclineView(APIView):
             order.status = "preparing"
             order.save()
 
+        order_status_changed.send(
+            sender=order.__class__,
+            order=order,
+            old_status="agent_assigned",
+            new_status="preparing",
+            actor=request.user,
+        )
         return Response(OrderSerializer(order).data)
 
 
