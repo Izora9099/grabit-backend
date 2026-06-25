@@ -7,5 +7,6 @@ elif [ "$RAILWAY_SERVICE_ROLE" = "beat" ]; then
   exec celery -A config.celery beat --loglevel=info
 else
   python manage.py migrate --noinput
-  exec gunicorn config.wsgi --workers 3 --timeout 60 --log-file -
+  # daphne serves both HTTP and WebSocket over the same port via ASGI.
+  exec daphne -b 0.0.0.0 -p "${PORT:-8000}" config.asgi:application
 fi

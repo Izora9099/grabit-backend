@@ -56,5 +56,10 @@ requests==2.32.3
 celery==5.4.0
 redis==5.2.1
 
+# ── Real-time WebSocket (Django Channels) ─────────────────────────────────────
+channels==4.2.0
+channels-redis==4.2.1
+daphne==4.1.2
+
 # ── Security Auditing ─────────────────────────────────────────────────────────
 pip-audit==2.7.3

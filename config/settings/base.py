@@ -12,6 +12,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = config("SECRET_KEY")
 
 INSTALLED_APPS = [
+    # daphne must be first so it can override the built-in runserver command
+    "daphne",
     # Two-factor auth must come before django.contrib.admin
     "two_factor",
     "django.contrib.admin",
@@ -22,6 +24,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.sites",
     # Third-party
+    "channels",
     "storages",
     "rest_framework",
     "rest_framework_simplejwt",
@@ -46,6 +49,7 @@ INSTALLED_APPS = [
     "disputes",
     "notifications.apps.NotificationsConfig",
     "payments",
+    "tracking",
 ]
 
 SITE_ID = 1
@@ -89,6 +93,20 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
+
+# ── Django Channels ───────────────────────────────────────────────────────────
+# Reuses the existing Redis instance (same DB as Celery; keys don't conflict).
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [config("REDIS_URL", default="redis://localhost:6379/0")],
+            "capacity": 1500,   # max messages queued per channel
+            "expiry": 60,       # seconds before an unread message expires
+        },
+    }
+}
 
 AUTH_USER_MODEL = "accounts.User"
 
