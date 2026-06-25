@@ -54,6 +54,18 @@ STORAGES = {
     },
 }
 
+# Use in-memory channel layer locally if Redis is not running.
+# WebSocket tracking won't work, but all REST endpoints will.
+import redis as _redis_lib
+_redis_url = config("REDIS_URL", default="redis://localhost:6379/0")
+try:
+    _r = _redis_lib.from_url(_redis_url, socket_connect_timeout=1)
+    _r.ping()
+except Exception:
+    CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+    }
+
 # Show full exception tracebacks in API error responses
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405
