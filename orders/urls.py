@@ -3,6 +3,8 @@ from . import views
 
 urlpatterns = [
     path("", views.OrderListCreateView.as_view(), name="orders"),
+    # Public receipt verification — no auth required
+    path("verify/<str:payment_id>/", views.PublicReceiptView.as_view(), name="order-verify"),
     # Static paths must come before dynamic <str:order_id>/ to avoid being swallowed
     path("messages/", views.MessageListCreateView.as_view(), name="messages"),
     path("messages/unread-count/", views.UnreadCountView.as_view(), name="messages-unread-count"),

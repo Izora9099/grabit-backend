@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -86,6 +87,29 @@ class OrderReceiptView(generics.RetrieveAPIView):
         if user.role == "admin":
             return qs
         return qs.filter(buyer=user)
+
+
+class PublicReceiptView(APIView):
+    """
+    Public endpoint — no authentication required.
+    Verifies a receipt by GrabIT payment_id (e.g. PAY-1000).
+    Returns 404 if the payment doesn't exist or was not paid.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, payment_id):
+        from payments.models import Payment
+        try:
+            payment = Payment.objects.select_related(
+                "order__shop", "order__buyer", "order__agent"
+            ).prefetch_related(
+                "order__items__product", "order__financials"
+            ).get(payment_id=payment_id, status="paid")
+        except Payment.DoesNotExist:
+            return Response({"detail": "Receipt not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ReceiptSerializer(payment.order)
+        return Response(serializer.data)
 
 
 class OrderStatusUpdateView(APIView):
