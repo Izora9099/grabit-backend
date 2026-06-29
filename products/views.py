@@ -1,10 +1,11 @@
+from django.db.models import Avg, Count, F
+from django.shortcuts import get_object_or_404
 from rest_framework import generics, filters, status
 from rest_framework.exceptions import NotFound
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.shortcuts import get_object_or_404
 from .models import Category, Product, ProductImage, Review, WishlistItem
 from .serializers import (
     CategorySerializer, ProductDetailSerializer, ProductImageSerializer,
@@ -106,7 +107,12 @@ class ProductReviewListCreateView(generics.ListCreateAPIView):
         return Review.objects.filter(product_id=self.kwargs["pk"])
 
     def perform_create(self, serializer):
-        serializer.save(buyer=self.request.user, product_id=self.kwargs["pk"])
+        review = serializer.save(buyer=self.request.user, product_id=self.kwargs["pk"])
+        agg = review.product.reviews.aggregate(avg=Avg("rating"), cnt=Count("id"))
+        Product.objects.filter(pk=review.product_id).update(
+            rating=round(agg["avg"] or 0, 2),
+            reviews_count=agg["cnt"],
+        )
 
 
 class WishlistView(generics.ListCreateAPIView):

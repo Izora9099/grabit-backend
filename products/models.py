@@ -1,4 +1,5 @@
 import os
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.text import slugify
 from shops.models import Shop
@@ -70,7 +71,7 @@ class ProductImage(models.Model):
 class Review(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="reviews")
     buyer = models.ForeignKey("accounts.User", on_delete=models.CASCADE, related_name="reviews")
-    rating = models.PositiveSmallIntegerField()  # 1–5
+    rating = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
     text = models.TextField()
     is_verified_purchase = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -1,3 +1,4 @@
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from accounts.models import User
 
@@ -57,7 +58,7 @@ class ShopFollow(models.Model):
 class ShopReview(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="shop_reviews")
     buyer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="shop_reviews")
-    rating = models.PositiveSmallIntegerField()  # 1–5
+    rating = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
     body = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 

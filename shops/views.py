@@ -1,3 +1,4 @@
+from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -61,7 +62,7 @@ class ShopProductsView(generics.ListAPIView):
 
 class ShopFollowView(APIView):
     def post(self, request, handle):
-        shop = Shop.objects.get(handle=handle)
+        shop = get_object_or_404(Shop, handle=handle)
         follow, created = ShopFollow.objects.get_or_create(user=request.user, shop=shop)
         if created:
             shop.followers_count += 1
