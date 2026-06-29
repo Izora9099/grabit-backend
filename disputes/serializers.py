@@ -44,9 +44,12 @@ class DisputeCreateSerializer(serializers.ModelSerializer):
         if hasattr(order, "dispute"):
             raise serializers.ValidationError("A dispute has already been filed for this order.")
         if order.status in ("delivered_confirm", "completed"):
-            if timezone.now() - order.updated_at > timedelta(days=7):
+            from payments.models import PlatformConfig
+            cfg = PlatformConfig.objects.first()
+            window_hours = cfg.dispute_window_hours if cfg else 48
+            if timezone.now() - order.updated_at > timedelta(hours=window_hours):
                 raise serializers.ValidationError(
-                    "Dispute window has closed. Disputes must be filed within 7 days of delivery."
+                    f"Dispute window has closed. Disputes must be filed within {window_hours} hours of delivery."
                 )
         return order
 

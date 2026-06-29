@@ -178,6 +178,7 @@ class ResolveDisputeView(APIView):
                     )
                 else:
                     payout = Payout.objects.create(
+                        order=order,
                         recipient=order.buyer,
                         method="mobile money",
                         phone_number=phone,
