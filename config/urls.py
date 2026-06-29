@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/v1/disputes/", include("disputes.urls")),
     path("api/v1/notifications/", include("notifications.urls")),
     path("api/v1/payments/", include("payments.urls")),
+    path("api/v1/analytics/", include("analytics.urls")),
 
     # API schema & interactive docs — admin-only in production, open in dev
     path("api/schema/", SpectacularAPIView.as_view(permission_classes=[_docs_permission]), name="schema"),

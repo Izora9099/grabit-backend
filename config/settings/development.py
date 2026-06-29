@@ -66,6 +66,11 @@ except Exception:
         "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
     }
 
+# Run Celery tasks synchronously in dev — analytics events write immediately
+# without needing a Redis broker or worker process running locally.
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = False  # swallow task exceptions so broker errors don't crash views
+
 # Show full exception tracebacks in API error responses
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405

@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "notifications.apps.NotificationsConfig",
     "payments",
     "tracking",
+    "analytics",
 ]
 
 SITE_ID = 1
