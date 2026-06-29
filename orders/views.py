@@ -247,9 +247,101 @@ class ConfirmDeliveryView(APIView):
         return Response({"detail": "Order confirmed. Escrow released to vendor."})
 
 
+CANCEL_REFUND_MEDIUM_MAP = {"mtn_momo": "mobile money", "orange_money": "orange money"}
+
+
+def _initiate_cancel_refund(order):
+    """Initiate a Fapshi refund for a cancelled paid order. Called outside the DB transaction."""
+    from payments.models import Payout
+    from payments.services import FapshiError, FapshiPayoutService
+    try:
+        phone = order.payment.phone_number
+        raw_method = order.payment.method
+    except Exception:
+        phone = None
+        raw_method = None
+
+    if not phone:
+        logger.error(
+            "Cannot initiate cancel refund for order %s: no phone on payment record.",
+            order.order_id,
+        )
+        return
+
+    medium = CANCEL_REFUND_MEDIUM_MAP.get(raw_method, "mobile money")
+    payout = Payout.objects.create(
+        order=order,
+        recipient=order.buyer,
+        method=medium,
+        phone_number=phone,
+        amount=order.total,
+        status="processing",
+        payout_date=timezone.now().date(),
+    )
+    try:
+        FapshiPayoutService().payout(
+            amount=order.total,
+            phone=phone,
+            medium=medium,
+            user_id=str(order.buyer_id),
+            external_id=f"cancel-refund-{order.order_id}",
+            message=f"GrabIT refund — cancelled order {order.order_id}",
+        )
+        payout.status = "paid"
+    except FapshiError as exc:
+        logger.error("Cancel refund failed for order %s: %s", order.order_id, exc)
+        payout.status = "failed"
+    payout.save(update_fields=["status"])
+
+
 class OrderCancelView(APIView):
-    """Vendor cancels an order before it has been picked up."""
+    """Cancel an order. Vendors can cancel pre-pickup; buyers can cancel before preparation."""
     def post(self, request, order_id):
+        if request.user.role == "buyer":
+            return self._buyer_cancel(request, order_id)
+        return self._vendor_cancel(request, order_id)
+
+    def _buyer_cancel(self, request, order_id):
+        with transaction.atomic():
+            order = get_object_or_404(
+                Order.objects.select_for_update(),
+                order_id=order_id, buyer=request.user,
+            )
+            if order.status not in ("awaiting_payment", "paid_escrow"):
+                return Response(
+                    {"detail": "Orders can only be cancelled before the vendor starts preparing."},
+                    status=400,
+                )
+
+            was_paid = order.status == "paid_escrow"
+            old_status = order.status
+            order.status = "cancelled"
+            order.save()
+
+            for item in order.items.all():
+                Product.objects.filter(pk=item.product_id).update(stock=F("stock") + item.quantity)
+
+            if was_paid:
+                EscrowEvent.objects.create(
+                    order=order,
+                    event="refunded",
+                    amount=order.total,
+                    note="Buyer cancelled order after payment. Refund initiated.",
+                )
+
+        if was_paid:
+            _initiate_cancel_refund(order)
+
+        order_status_changed.send(
+            sender=order.__class__,
+            order=order,
+            old_status=old_status,
+            new_status="cancelled",
+            actor=request.user,
+        )
+        return Response(OrderSerializer(order).data)
+
+    def _vendor_cancel(self, request, order_id):
         try:
             shop = request.user.shop
         except AttributeError:
@@ -280,45 +372,8 @@ class OrderCancelView(APIView):
                     note="Vendor cancelled order after buyer payment. Refund initiated.",
                 )
 
-        # Initiate refund AFTER commit so a Fapshi error can't roll back the
-        # cancellation. Failures surface via Payout row status for manual retry.
         if was_paid:
-            from payments.models import Payout
-            from payments.services import FapshiError, FapshiPayoutService
-            try:
-                phone = order.payment.phone_number
-            except Exception:
-                phone = None
-
-            if phone:
-                payout = Payout.objects.create(
-                    order=order,
-                    recipient=order.buyer,
-                    method="mobile money",
-                    phone_number=phone,
-                    amount=order.total,
-                    status="processing",
-                    payout_date=timezone.now().date(),
-                )
-                try:
-                    FapshiPayoutService().payout(
-                        amount=order.total,
-                        phone=phone,
-                        medium="mobile money",
-                        user_id=str(order.buyer_id),
-                        external_id=f"cancel-refund-{order.order_id}",
-                        message=f"GrabIT refund — cancelled order {order.order_id}",
-                    )
-                    payout.status = "paid"
-                except FapshiError as exc:
-                    logger.error("Cancel refund failed for order %s: %s", order.order_id, exc)
-                    payout.status = "failed"
-                payout.save(update_fields=["status"])
-            else:
-                logger.error(
-                    "Cannot initiate cancel refund for order %s: no phone on payment record.",
-                    order.order_id,
-                )
+            _initiate_cancel_refund(order)
 
         order_status_changed.send(
             sender=order.__class__,
