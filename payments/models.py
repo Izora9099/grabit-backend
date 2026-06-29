@@ -41,6 +41,7 @@ class Payout(models.Model):
 
     payout_id = models.CharField(max_length=20, unique=True)
     recipient = models.ForeignKey(User, on_delete=models.PROTECT, related_name="payouts")
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name="agent_payouts")
     method = models.CharField(max_length=20)
     phone_number = models.CharField(max_length=20, blank=True)
     amount = models.PositiveIntegerField()

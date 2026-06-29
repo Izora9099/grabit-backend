@@ -95,7 +95,7 @@ def disburse_agent_delivery_fee(order_pk):
         )
         return
 
-    existing = Payout.objects.filter(recipient=agent, amount=fee).exclude(status="failed").first()
+    existing = Payout.objects.filter(recipient=agent, order=order).exclude(status="failed").first()
     if existing:
         logger.warning(
             "Skipping duplicate payout for order %s — existing payout %s has status %s",
@@ -105,6 +105,7 @@ def disburse_agent_delivery_fee(order_pk):
 
     payout = Payout.objects.create(
         recipient=agent,
+        order=order,
         method="mobile money",
         phone_number=agent.phone,
         amount=fee,
@@ -124,6 +125,76 @@ def disburse_agent_delivery_fee(order_pk):
     except FapshiError as exc:
         logger.error(
             "disburse_agent_delivery_fee: Fapshi payout failed for order %s: %s",
+            order.order_id, exc,
+        )
+        payout.status = "failed"
+    payout.save(update_fields=["status"])
+
+
+@shared_task
+def disburse_vendor_seller_amount(order_pk):
+    """
+    Pays the vendor their seller_amount (after platform commission) when an
+    order is completed. Mirrors disburse_agent_delivery_fee.
+    """
+    from orders.models import Order
+
+    try:
+        order = (
+            Order.objects
+            .select_related("shop__owner", "financials")
+            .get(pk=order_pk)
+        )
+    except Order.DoesNotExist:
+        return
+
+    try:
+        seller_amount = order.financials.seller_amount
+    except Exception:
+        logger.error("disburse_vendor_seller_amount: no OrderFinancials for order pk=%s", order_pk)
+        return
+
+    if seller_amount < 100:
+        return
+
+    vendor = order.shop.owner
+    if not vendor.phone:
+        logger.error(
+            "disburse_vendor_seller_amount: vendor %s has no phone number, cannot pay order %s",
+            vendor.id, order.order_id,
+        )
+        return
+
+    existing = Payout.objects.filter(recipient=vendor, order=order).exclude(status="failed").first()
+    if existing:
+        logger.warning(
+            "Skipping duplicate vendor payout for order %s — existing payout %s has status %s",
+            order.order_id, existing.payout_id, existing.status,
+        )
+        return
+
+    payout = Payout.objects.create(
+        recipient=vendor,
+        order=order,
+        method="mobile money",
+        phone_number=vendor.phone,
+        amount=seller_amount,
+        status="processing",
+        payout_date=timezone.now().date(),
+    )
+    try:
+        FapshiPayoutService().payout(
+            amount=seller_amount,
+            phone=vendor.phone,
+            medium="mobile money",
+            user_id=str(vendor.id),
+            external_id=payout.payout_id,
+            message=f"GrabIT seller payout — order {order.order_id}",
+        )
+        payout.status = "paid"
+    except FapshiError as exc:
+        logger.error(
+            "disburse_vendor_seller_amount: Fapshi payout failed for order %s: %s",
             order.order_id, exc,
         )
         payout.status = "failed"
