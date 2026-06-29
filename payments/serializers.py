@@ -17,12 +17,14 @@ class InitiatePaymentSerializer(serializers.Serializer):
     phone_number = serializers.CharField()
 
     def validate_phone_number(self, value):
+        value = value.strip().lstrip("+")
         digits = re.sub(r"\D", "", value)
-        if len(digits) == 12 and digits.startswith("237"):  # tolerate +237 prefix
+        if digits.startswith("237"):
             digits = digits[3:]
         if not re.fullmatch(r"6\d{8}", digits):
             raise serializers.ValidationError(
-                "Enter a valid 9-digit Cameroonian mobile number (e.g. 6XXXXXXXX)."
+                "Only Cameroonian phone numbers are supported. Please enter a valid number "
+                "starting with 6 (e.g. 6XXXXXXXX or +2376XXXXXXXX)."
             )
         return digits
 
@@ -53,11 +55,13 @@ class PayoutRequestSerializer(serializers.Serializer):
     phone = serializers.CharField()
 
     def validate_phone(self, value):
+        value = value.strip().lstrip("+")
         digits = re.sub(r"\D", "", value)
-        if len(digits) == 12 and digits.startswith("237"):
+        if digits.startswith("237"):
             digits = digits[3:]
         if not re.fullmatch(r"6\d{8}", digits):
             raise serializers.ValidationError(
-                "Enter a valid 9-digit Cameroonian mobile number (e.g. 6XXXXXXXX)."
+                "Only Cameroonian phone numbers are supported. Please enter a valid number "
+                "starting with 6 (e.g. 6XXXXXXXX or +2376XXXXXXXX)."
             )
         return digits

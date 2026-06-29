@@ -164,6 +164,11 @@ def settle_payment_from_status(trans_id, txn):
         # Fire AFTER commit so notification receivers see committed state.
         if fire_confirmed:
             payment_confirmed.send(sender=Payment, payment=payment, order=order)
+            try:
+                from analytics.tasks import record_event
+                record_event.delay("order_paid", order.shop_id, None, order.buyer_id)
+            except Exception:
+                pass
 
     elif api_status == "FAILED":
         with transaction.atomic():

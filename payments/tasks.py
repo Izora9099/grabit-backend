@@ -57,7 +57,7 @@ def auto_release_escrow():
         )
 
 
-@shared_task
+@shared_task(autoretry_for=(Exception,), max_retries=3, default_retry_delay=300)
 def disburse_agent_delivery_fee(order_pk):
     """
     Pays the delivery fee to the assigned agent after order completion.
@@ -92,6 +92,14 @@ def disburse_agent_delivery_fee(order_pk):
         logger.error(
             "disburse_agent_delivery_fee: agent %s has no phone number, cannot pay order %s",
             agent.id, order.order_id,
+        )
+        return
+
+    existing = Payout.objects.filter(recipient=agent, amount=fee).exclude(status="failed").first()
+    if existing:
+        logger.warning(
+            "Skipping duplicate payout for order %s — existing payout %s has status %s",
+            order.order_id, existing.payout_id, existing.status,
         )
         return
 
