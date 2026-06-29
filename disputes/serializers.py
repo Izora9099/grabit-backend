@@ -1,4 +1,8 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import serializers
+
 from .models import Dispute
 
 DISPUTABLE_STATUSES = {
@@ -39,6 +43,11 @@ class DisputeCreateSerializer(serializers.ModelSerializer):
             )
         if hasattr(order, "dispute"):
             raise serializers.ValidationError("A dispute has already been filed for this order.")
+        if order.status in ("delivered_confirm", "completed"):
+            if timezone.now() - order.updated_at > timedelta(days=7):
+                raise serializers.ValidationError(
+                    "Dispute window has closed. Disputes must be filed within 7 days of delivery."
+                )
         return order
 
     def create(self, validated_data):

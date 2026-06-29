@@ -3,6 +3,8 @@ import logging
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from rest_framework import generics, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -19,6 +21,7 @@ from payments.services import FapshiError, FapshiPayoutService
 logger = logging.getLogger(__name__)
 
 
+@method_decorator(ratelimit(key="user", rate="3/h", method="POST", block=True), name="dispatch")
 class DisputeListCreateView(generics.ListCreateAPIView):
     def get_serializer_class(self):
         return DisputeCreateSerializer if self.request.method == "POST" else DisputeSerializer
@@ -161,28 +164,52 @@ class ResolveDisputeView(APIView):
                 phone = None
 
             if phone:
-                payout = Payout.objects.create(
-                    recipient=order.buyer,
-                    method="mobile money",
-                    phone_number=phone,
-                    amount=refund_amount,
-                    status="processing",
-                    payout_date=timezone.now().date(),
+                # Idempotency: skip if a completed refund payout already exists for this buyer+amount
+                existing_refund = (
+                    Payout.objects
+                    .filter(recipient=order.buyer, amount=refund_amount)
+                    .exclude(status="failed")
+                    .first()
                 )
-                try:
-                    FapshiPayoutService().payout(
-                        amount=refund_amount,
-                        phone=phone,
-                        medium="mobile money",
-                        user_id=str(order.buyer_id),
-                        external_id=f"refund-{order.order_id}",
-                        message=f"GrabIT refund — order {order.order_id}",
+                if existing_refund:
+                    logger.warning(
+                        "Skipping duplicate refund for order %s — existing payout %s has status %s",
+                        order.order_id, existing_refund.payout_id, existing_refund.status,
                     )
-                    payout.status = "paid"
-                except FapshiError as exc:
-                    logger.error("Refund payout failed for order %s: %s", order.order_id, exc)
-                    payout.status = "failed"
-                payout.save(update_fields=["status"])
+                else:
+                    payout = Payout.objects.create(
+                        recipient=order.buyer,
+                        method="mobile money",
+                        phone_number=phone,
+                        amount=refund_amount,
+                        status="processing",
+                        payout_date=timezone.now().date(),
+                    )
+                    for attempt in range(3):
+                        try:
+                            FapshiPayoutService().payout(
+                                amount=refund_amount,
+                                phone=phone,
+                                medium="mobile money",
+                                user_id=str(order.buyer_id),
+                                external_id=f"refund-{order.order_id}",
+                                message=f"GrabIT refund — order {order.order_id}",
+                            )
+                            payout.status = "paid"
+                            break
+                        except FapshiError as exc:
+                            if attempt == 2:
+                                logger.error(
+                                    "Refund failed after 3 attempts for order %s: %s",
+                                    order.order_id, exc,
+                                )
+                                payout.status = "failed"
+                            else:
+                                logger.warning(
+                                    "Refund attempt %d failed for order %s, retrying: %s",
+                                    attempt + 1, order.order_id, exc,
+                                )
+                    payout.save(update_fields=["status"])
             else:
                 logger.error(
                     "Cannot initiate refund for order %s: no phone number on payment record.",
