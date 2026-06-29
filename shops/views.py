@@ -34,6 +34,22 @@ class ShopDetailView(generics.RetrieveAPIView):
     permission_classes = [AllowAny]
     lookup_field = "handle"
 
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+        try:
+            from analytics.tasks import record_event
+            record_event.delay(
+                "shop_visited",
+                obj.id,
+                None,
+                request.user.id if request.user.is_authenticated else None,
+                request.session.session_key or "",
+            )
+        except Exception:
+            pass
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data)
+
 
 class ShopProductsView(generics.ListAPIView):
     serializer_class = ProductListSerializer

@@ -55,6 +55,17 @@ class ProductDetailView(generics.RetrieveAPIView):
         obj = self.get_object()
         obj.views += 1
         obj.save(update_fields=["views"])
+        try:
+            from analytics.tasks import record_event
+            record_event.delay(
+                "product_viewed",
+                obj.shop_id,
+                obj.id,
+                request.user.id if request.user.is_authenticated else None,
+                request.session.session_key or "",
+            )
+        except Exception:
+            pass
         return super().retrieve(request, *args, **kwargs)
 
 
@@ -105,7 +116,18 @@ class WishlistView(generics.ListCreateAPIView):
         return WishlistItem.objects.filter(user=self.request.user).select_related("product")
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        item = serializer.save(user=self.request.user)
+        try:
+            from analytics.tasks import record_event
+            record_event.delay(
+                "wishlist_added",
+                item.product.shop_id,
+                item.product_id,
+                self.request.user.id,
+                self.request.session.session_key or "",
+            )
+        except Exception:
+            pass
 
 
 class WishlistItemView(generics.DestroyAPIView):

@@ -1,6 +1,10 @@
+import logging
+
 from django.conf import settings
 from django.core.mail import send_mail
 from django.dispatch import receiver
+
+logger = logging.getLogger(__name__)
 
 from orders.signals import (
     dispute_filed,
@@ -43,13 +47,15 @@ def on_payment_confirmed(sender, payment, order, **kwargs):
         body=buyer_body,
         href=f"/orders/{order.order_id}",
     )
-    send_mail(
-        subject=f"[GrabIT] Payment confirmed — {order.order_id}",
-        message=buyer_body,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[order.buyer.email],
-        fail_silently=True,
-    )
+    try:
+        send_mail(
+            subject=f"[GrabIT] Payment confirmed — {order.order_id}",
+            message=buyer_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[order.buyer.email],
+        )
+    except Exception as e:
+        logger.error("Failed to send payment_confirmed email to %s: %s", order.buyer.email, e)
 
     Notification.objects.create(
         user=order.shop.owner,
@@ -58,13 +64,15 @@ def on_payment_confirmed(sender, payment, order, **kwargs):
         body=vendor_body,
         href=f"/orders/{order.order_id}",
     )
-    send_mail(
-        subject=f"[GrabIT] New paid order: {order.order_id}",
-        message=vendor_body,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[order.shop.owner.email],
-        fail_silently=True,
-    )
+    try:
+        send_mail(
+            subject=f"[GrabIT] New paid order: {order.order_id}",
+            message=vendor_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[order.shop.owner.email],
+        )
+    except Exception as e:
+        logger.error("Failed to send payment_confirmed email to %s: %s", order.shop.owner.email, e)
 
 
 @receiver(order_status_changed)
@@ -92,6 +100,12 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
         )
 
     if new_status == "completed":
+        try:
+            from analytics.tasks import record_event
+            record_event.delay("order_completed", order.shop_id, None, order.buyer_id)
+        except Exception:
+            pass
+
         buyer_body = "Your order has been marked as completed. Thank you for using GrabIT!"
         vendor_body = f"Order {order.order_id} is complete. Your payout will be processed shortly."
 
@@ -102,13 +116,15 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
             body=buyer_body,
             href=f"/orders/{order.order_id}",
         )
-        send_mail(
-            subject=f"[GrabIT] Order {order.order_id} completed",
-            message=buyer_body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[order.buyer.email],
-            fail_silently=True,
-        )
+        try:
+            send_mail(
+                subject=f"[GrabIT] Order {order.order_id} completed",
+                message=buyer_body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[order.buyer.email],
+            )
+        except Exception as e:
+            logger.error("Failed to send order_completed email to %s: %s", order.buyer.email, e)
 
         Notification.objects.create(
             user=order.shop.owner,
@@ -117,13 +133,15 @@ def on_order_status_changed(sender, order, old_status, new_status, actor, **kwar
             body=vendor_body,
             href=f"/orders/{order.order_id}",
         )
-        send_mail(
-            subject=f"[GrabIT] Order {order.order_id} completed — payout incoming",
-            message=vendor_body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[order.shop.owner.email],
-            fail_silently=True,
-        )
+        try:
+            send_mail(
+                subject=f"[GrabIT] Order {order.order_id} completed — payout incoming",
+                message=vendor_body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[order.shop.owner.email],
+            )
+        except Exception as e:
+            logger.error("Failed to send order_completed email to %s: %s", order.shop.owner.email, e)
 
     if new_status == "preparing" and old_status == "agent_assigned":
         # Agent declined — notify vendor so they can reassign
@@ -168,13 +186,15 @@ def on_dispute_filed(sender, dispute, **kwargs):
         body=vendor_body,
         href=f"/disputes/{dispute.dispute_id}",
     )
-    send_mail(
-        subject=f"[GrabIT] Dispute filed on order {order.order_id}",
-        message=vendor_body,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[order.shop.owner.email],
-        fail_silently=True,
-    )
+    try:
+        send_mail(
+            subject=f"[GrabIT] Dispute filed on order {order.order_id}",
+            message=vendor_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[order.shop.owner.email],
+        )
+    except Exception as e:
+        logger.error("Failed to send dispute_filed email to %s: %s", order.shop.owner.email, e)
 
 
 @receiver(dispute_resolved)
@@ -191,10 +211,12 @@ def on_dispute_resolved(sender, dispute, **kwargs):
             body=body,
             href=f"/disputes/{dispute.dispute_id}",
         )
-        send_mail(
-            subject=f"[GrabIT] Dispute {dispute.dispute_id} resolved",
-            message=body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=True,
-        )
+        try:
+            send_mail(
+                subject=f"[GrabIT] Dispute {dispute.dispute_id} resolved",
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+            )
+        except Exception as e:
+            logger.error("Failed to send dispute_resolved email to %s: %s", user.email, e)

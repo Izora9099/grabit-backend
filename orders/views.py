@@ -40,6 +40,17 @@ class OrderListCreateView(generics.ListCreateAPIView):
         serializer = CreateOrderSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         order = serializer.save()
+        try:
+            from analytics.tasks import record_event
+            record_event.delay(
+                "order_placed",
+                order.shop_id,
+                None,
+                request.user.id,
+                request.session.session_key or "",
+            )
+        except Exception:
+            pass
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 
@@ -363,7 +374,28 @@ class MessageListCreateView(generics.ListCreateAPIView):
             if user.id not in allowed_ids or recipient.id not in allowed_ids:
                 raise PermissionDenied("You are not a participant in this order.")
 
-        serializer.save(sender=user)
+        message = serializer.save(sender=user)
+
+        # Broadcast to both participants via WebSocket
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        uid1, uid2 = sorted([user.id, recipient.id])
+        group_name = f"chat_{uid1}_{uid2}"
+
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    "type": "message_new",
+                    "id": message.id,
+                    "sender_id": user.id,
+                    "sender_name": user.get_full_name() or user.username,
+                    "body": message.body,
+                    "created_at": message.created_at.isoformat(),
+                },
+            )
 
 
 class MessageMarkReadView(APIView):
@@ -651,4 +683,49 @@ class AgentRatingsView(APIView):
             "total": total,
             "breakdown": star_breakdown,
             "reviews": reviews_list,
+        })
+
+
+class AgentReconciliationView(APIView):
+    """
+    Today's cash reconciliation for the authenticated agent.
+    Returns delivery fees earned today, payouts already disbursed, and the
+    pending balance the platform still owes the agent.
+    """
+    def get(self, request):
+        import datetime
+        from django.db.models import Sum
+        from payments.models import Payout
+
+        user = request.user
+        today = timezone.now().date()
+
+        # Delivery fees earned from orders completed today
+        earned_today = (
+            Order.objects
+            .filter(agent=user, status="completed", updated_at__date=today)
+            .filter(financials__isnull=False)
+            .aggregate(total=Sum("financials__delivery_fee"))["total"] or 0
+        )
+
+        # Payouts already sent to this agent today
+        paid_out_today = (
+            Payout.objects
+            .filter(recipient=user, payout_date=today, status="paid")
+            .aggregate(total=Sum("amount"))["total"] or 0
+        )
+
+        # Pending = earned but not yet disbursed
+        pending_payout = max(0, earned_today - paid_out_today)
+
+        # Orders currently in the agent's hands (picked up, in transit)
+        in_flight_count = Order.objects.filter(
+            agent=user, status__in=["picked_up", "in_transit"]
+        ).count()
+
+        return Response({
+            "earned_today": earned_today,
+            "paid_out_today": paid_out_today,
+            "pending_payout": pending_payout,
+            "in_flight_orders": in_flight_count,
         })
