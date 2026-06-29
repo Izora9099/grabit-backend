@@ -79,13 +79,15 @@ def on_payment_confirmed(sender, payment, order, **kwargs):
 def on_order_status_changed(sender, order, old_status, new_status, actor, **kwargs):
     label = STATUS_LABELS.get(new_status, new_status)
 
-    if new_status == "agent_assigned" and order.agent:
-        # Notify the newly assigned agent
+    # In the first-claim model order.agent is None when status becomes agent_assigned
+    # (the agent self-assigns by picking up). Notify the claiming agent at picked_up,
+    # when order.agent has already been set and saved.
+    if new_status == "picked_up" and order.agent:
         Notification.objects.create(
             user=order.agent,
             type="delivery",
-            title=f"New delivery assignment: {order.order_id}",
-            body=f"You have been assigned to deliver order {order.order_id} in {order.city}.",
+            title=f"Delivery claimed: {order.order_id}",
+            body=f"You have claimed order {order.order_id} in {order.city}. Head to the vendor for pickup.",
             href=f"/orders/{order.order_id}",
         )
 
