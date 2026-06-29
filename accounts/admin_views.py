@@ -271,6 +271,7 @@ class AdminCommissionsView(APIView):
     def get(self, request):
         from orders.models import Order
         from django.db.models.functions import TruncMonth
+        from orders.models import OrderFinancials
         monthly = (
             Order.objects.filter(status="completed")
             .annotate(month=TruncMonth("placed_at"))
@@ -278,19 +279,21 @@ class AdminCommissionsView(APIView):
             .annotate(
                 gmv=Sum("total"),
                 orders=Count("id"),
+                platform_fees=Sum("financials__platform_fee"),
             )
             .order_by("-month")[:12]
         )
-        # Approximate commission at 5% of GMV
         result = []
         for row in monthly:
             gmv = row["gmv"] or 0
+            fees = row["platform_fees"] or 0
+            rate = round((fees / gmv * 100), 2) if gmv else 0.0
             result.append({
                 "month": row["month"].strftime("%b %Y") if row["month"] else "",
                 "gmv": gmv,
-                "revenue": int(gmv * 0.05),
+                "revenue": int(fees),
                 "orders": row["orders"],
-                "rate": 5.0,
+                "rate": rate,
             })
         return Response(result)
 

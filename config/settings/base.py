@@ -43,12 +43,13 @@ INSTALLED_APPS = [
     "allauth.socialaccount.providers.google",
     # Local apps
     "accounts",
+    "payments.apps.PaymentsConfig",
     "products",
     "orders",
     "shops",
     "disputes",
     "notifications.apps.NotificationsConfig",
-    "payments",
+    # payments registered below via PaymentsConfig for AppConfig.ready() signal wiring
     "tracking",
     "analytics",
 ]
@@ -212,8 +213,9 @@ JWT_REFRESH_COOKIE_NAME = "grabit_refresh"
 JWT_REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7 days in seconds
 
 # ── Fapshi — collection service (buyer payments) ──────────────────────────────
-# Switch FAPSHI_BASE_URL to https://live.fapshi.com when going live.
-# Payout service gets its own separate credentials when built.
+# Both URLs default to sandbox so a missing Railway env var can never silently
+# route real money to the wrong endpoint. Set FAPSHI_BASE_URL and
+# FAPSHI_PAYOUT_BASE_URL explicitly to https://live.fapshi.com in production.
 FAPSHI_BASE_URL       = config("FAPSHI_BASE_URL", default="https://sandbox.fapshi.com")
 FAPSHI_API_USER       = config("FAPSHI_API_USER", default="")
 FAPSHI_API_KEY        = config("FAPSHI_API_KEY", default="")
@@ -225,14 +227,25 @@ FAPSHI_PROXY_SECRET   = config("FAPSHI_PROXY_SECRET", default="")
 # Separate Fapshi service for vendor payouts (disbursement).
 # Fapshi requires a different service from the collection one.
 # Activate by emailing Fapshi support with the payout service's Live API User.
-FAPSHI_PAYOUT_BASE_URL  = config("FAPSHI_PAYOUT_BASE_URL", default="https://live.fapshi.com")
+FAPSHI_PAYOUT_BASE_URL  = config("FAPSHI_PAYOUT_BASE_URL", default="https://sandbox.fapshi.com")
 FAPSHI_PAYOUT_API_USER  = config("FAPSHI_PAYOUT_API_USER", default="")
 FAPSHI_PAYOUT_API_KEY   = config("FAPSHI_PAYOUT_API_KEY", default="")
 
+# ── Cache (Redis) — shared across Gunicorn workers so django-ratelimit counters
+# are consistent. Uses DB 1 to avoid colliding with Celery (DB 0).
+_REDIS_CACHE_URL = config("REDIS_URL", default="redis://localhost:6379/0").rstrip("/") + "/1"
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": _REDIS_CACHE_URL,
+    }
+}
+
 # ── Celery ────────────────────────────────────────────────────────────────────
-CELERY_BROKER_URL     = config("REDIS_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://localhost:6379/0")
-CELERY_TIMEZONE       = TIME_ZONE
+CELERY_BROKER_URL                        = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND                    = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_TIMEZONE                          = TIME_ZONE
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BEAT_SCHEDULE  = {
     "reconcile-pending-payments": {
         "task": "payments.tasks.reconcile_pending_payments",
@@ -244,4 +257,36 @@ CELERY_BEAT_SCHEDULE  = {
     },
 }
 
-
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process} {thread} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "grabit": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}

@@ -2,7 +2,7 @@ import os
 
 from django.core.asgi import get_asgi_application
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 # get_asgi_application() must be called before any models are imported so that
 # Django's app registry is ready before Channels imports consumers.
