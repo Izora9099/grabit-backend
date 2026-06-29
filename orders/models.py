@@ -98,6 +98,22 @@ class OrderFinancials(models.Model):
         return f"Financials for {self.order.order_id}"
 
 
+class DeliveryReview(models.Model):
+    """Buyer rating of the delivery agent for a specific completed order."""
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="delivery_review")
+    agent = models.ForeignKey(User, on_delete=models.CASCADE, related_name="delivery_reviews")
+    buyer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="given_delivery_reviews")
+    rating = models.PositiveSmallIntegerField()
+    text = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.buyer.username} → agent {self.agent.username} ({self.rating}★)"
+
+
 class Message(models.Model):
     """In-app messaging between buyer, vendor, agent, support."""
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="messages", null=True, blank=True)

@@ -201,6 +201,10 @@ class OrderStatusUpdateView(APIView):
                     amount=order.total,
                     note="Buyer confirmed delivery. Escrow released to vendor.",
                 )
+                from products.models import Product as _Product
+                from django.db.models import F as _F
+                for item in order.items.all():
+                    _Product.objects.filter(pk=item.product_id).update(sales=_F("sales") + item.quantity)
             else:
                 order.save()
 
@@ -288,6 +292,7 @@ class OrderCancelView(APIView):
 
             if phone:
                 payout = Payout.objects.create(
+                    order=order,
                     recipient=order.buyer,
                     method="mobile money",
                     phone_number=phone,
@@ -541,16 +546,9 @@ class AgentStatsView(APIView):
         declined = deliveries.filter(status="preparing", agent__isnull=True).count()
         acceptance_rate = round((total_assigned - declined) / total_assigned * 100, 1) if total_assigned else None
 
-        # Average rating from delivery reviews (uses ProductReview rated against completed agent orders)
-        from django.db.models import Q
-        try:
-            from products.models import Review
-            avg_rating = Review.objects.filter(
-                order__agent=user, order__status="completed"
-            ).aggregate(avg=Avg("rating"))["avg"]
-            rating = round(float(avg_rating), 2) if avg_rating is not None else None
-        except Exception:
-            rating = None
+        from orders.models import DeliveryReview
+        avg_rating = DeliveryReview.objects.filter(agent=user).aggregate(avg=Avg("rating"))["avg"]
+        rating = round(float(avg_rating), 2) if avg_rating is not None else None
 
         return Response({
             "today_deliveries": today_count,
@@ -641,42 +639,39 @@ class AgentRatingsView(APIView):
 
         user = request.user
 
-        try:
-            from products.models import Review
-            reviews_qs = Review.objects.filter(
-                order__agent=user, order__status="completed"
-            ).select_related("order", "buyer").order_by("-created_at")
-
-            total = reviews_qs.count()
-            avg = reviews_qs.aggregate(avg=Avg("rating"))["avg"]
-
-            breakdown = (
-                reviews_qs.values("rating")
-                .annotate(count=Count("id"))
-                .order_by("rating")
-            )
-            breakdown_map = {b["rating"]: b["count"] for b in breakdown}
-            star_breakdown = [
-                {"stars": s, "count": breakdown_map.get(s, 0), "pct": round(breakdown_map.get(s, 0) / total * 100, 1) if total else 0}
-                for s in [5, 4, 3, 2, 1]
-            ]
-
-            reviews_list = [
-                {
-                    "id": r.id,
-                    "buyer_name": r.buyer_name,
-                    "rating": r.rating,
-                    "text": r.text,
-                    "created_at": r.created_at,
-                    "order_id": r.order.order_id if r.order else None,
-                }
-                for r in reviews_qs[:20]
-            ]
-        except Exception:
-            avg = None
-            total = 0
-            star_breakdown = [{"stars": s, "count": 0, "pct": 0} for s in [5, 4, 3, 2, 1]]
-            reviews_list = []
+        from orders.models import DeliveryReview
+        reviews_qs = (
+            DeliveryReview.objects.filter(agent=user)
+            .select_related("buyer", "order")
+            .order_by("-created_at")
+        )
+        total = reviews_qs.count()
+        avg = reviews_qs.aggregate(avg=Avg("rating"))["avg"]
+        breakdown = (
+            reviews_qs.values("rating")
+            .annotate(count=Count("id"))
+            .order_by("rating")
+        )
+        breakdown_map = {b["rating"]: b["count"] for b in breakdown}
+        star_breakdown = [
+            {
+                "stars": s,
+                "count": breakdown_map.get(s, 0),
+                "pct": round(breakdown_map.get(s, 0) / total * 100, 1) if total else 0,
+            }
+            for s in [5, 4, 3, 2, 1]
+        ]
+        reviews_list = [
+            {
+                "id": r.id,
+                "buyer_name": r.buyer.get_full_name() or r.buyer.username,
+                "rating": r.rating,
+                "text": r.text,
+                "created_at": r.created_at,
+                "order_id": r.order.order_id,
+            }
+            for r in reviews_qs[:20]
+        ]
 
         return Response({
             "average": round(float(avg), 2) if avg is not None else None,
@@ -729,3 +724,39 @@ class AgentReconciliationView(APIView):
             "pending_payout": pending_payout,
             "in_flight_orders": in_flight_count,
         })
+
+
+class DeliveryReviewCreateView(APIView):
+    """Buyer submits a 1–5 star rating for the delivery agent after order completion."""
+
+    def post(self, request, order_id):
+        try:
+            order = Order.objects.select_related("agent", "buyer").get(
+                order_id=order_id, buyer=request.user, status="completed"
+            )
+        except Order.DoesNotExist:
+            return Response({"detail": "Order not found or not yet completed."}, status=404)
+
+        if not order.agent_id:
+            return Response({"detail": "No agent was assigned to this order."}, status=400)
+
+        from orders.models import DeliveryReview
+        if DeliveryReview.objects.filter(order=order).exists():
+            return Response({"detail": "You have already reviewed this delivery."}, status=400)
+
+        try:
+            rating = int(request.data.get("rating", 0))
+        except (ValueError, TypeError):
+            return Response({"detail": "rating must be an integer 1–5."}, status=400)
+
+        if not (1 <= rating <= 5):
+            return Response({"detail": "rating must be between 1 and 5."}, status=400)
+
+        DeliveryReview.objects.create(
+            order=order,
+            agent=order.agent,
+            buyer=request.user,
+            rating=rating,
+            text=request.data.get("text", ""),
+        )
+        return Response({"detail": "Review submitted."}, status=201)
