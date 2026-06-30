@@ -27,6 +27,9 @@ class OrderFinancialsSerializer(serializers.ModelSerializer):
         ]
 
 
+ACTIVE_DELIVERY_STATUSES = {"picked_up", "in_transit", "delivered_confirm"}
+
+
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     financials = OrderFinancialsSerializer(read_only=True)
@@ -35,18 +38,24 @@ class OrderSerializer(serializers.ModelSerializer):
     agent_name = serializers.CharField(source="agent.get_full_name", read_only=True)
     vendor_user_id = serializers.IntegerField(source="shop.owner.id", read_only=True)
     agent_user_id = serializers.IntegerField(source="agent.id", allow_null=True, read_only=True)
+    agent_phone = serializers.SerializerMethodField()
+
+    def get_agent_phone(self, obj):
+        if obj.status in ACTIVE_DELIVERY_STATUSES and obj.agent_id:
+            return obj.agent.phone or None
+        return None
 
     class Meta:
         model = Order
         fields = [
             "order_id", "status", "city", "delivery_address", "total",
             "escrow_released", "placed_at", "updated_at",
-            "shop_name", "buyer_name", "agent_name", "vendor_user_id", "agent_user_id",
+            "shop_name", "buyer_name", "agent_name", "agent_phone", "vendor_user_id", "agent_user_id",
             "items", "financials",
         ]
         read_only_fields = [
             "order_id", "total", "escrow_released", "placed_at", "updated_at",
-            "shop_name", "buyer_name", "agent_name", "vendor_user_id", "agent_user_id",
+            "shop_name", "buyer_name", "agent_name", "agent_phone", "vendor_user_id", "agent_user_id",
         ]
 
 
