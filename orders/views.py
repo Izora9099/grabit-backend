@@ -413,6 +413,7 @@ class AgentDeclineView(APIView):
 
 class MessageListCreateView(generics.ListCreateAPIView):
     serializer_class = MessageSerializer
+    pagination_class = None
 
     def get_queryset(self):
         user = self.request.user
@@ -518,6 +519,7 @@ class ConversationDetailView(generics.ListAPIView):
     Automatically marks all unread messages in the thread as read.
     """
     serializer_class = MessageSerializer
+    pagination_class = None
 
     def get_queryset(self):
         user = self.request.user
