@@ -29,7 +29,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
         ).prefetch_related("items__product", "financials")
         if user.role == "vendor":
             try:
-                return qs.filter(shop=user.shop)
+                return qs.filter(shop=user.shop).exclude(status="awaiting_payment")
             except Exception:
                 return Order.objects.none()
         if user.role == "agent":
@@ -65,7 +65,7 @@ class OrderDetailView(generics.RetrieveAPIView):
         ).prefetch_related("items__product", "financials")
         if user.role == "vendor":
             try:
-                return qs.filter(shop=user.shop)
+                return qs.filter(shop=user.shop).exclude(status="awaiting_payment")
             except Exception:
                 return Order.objects.none()
         if user.role == "agent":
@@ -352,7 +352,7 @@ class OrderCancelView(APIView):
                 Order.objects.select_for_update(),
                 order_id=order_id, shop=shop,
             )
-            if order.status not in ("awaiting_payment", "paid_escrow", "preparing", "agent_assigned"):
+            if order.status not in ("paid_escrow", "preparing", "agent_assigned"):
                 return Response({"detail": "Order cannot be cancelled at this stage."}, status=400)
 
             was_paid = order.status == "paid_escrow"
