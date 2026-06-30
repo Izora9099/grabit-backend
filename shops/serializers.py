@@ -7,6 +7,7 @@ from .models import Shop, ShopFollow, ShopReview, KYCDocument
 
 class ShopSerializer(serializers.ModelSerializer):
     owner_name = serializers.CharField(source="owner.get_full_name", read_only=True)
+    owner_id = serializers.IntegerField(source="owner.id", read_only=True)
     is_following = serializers.SerializerMethodField()
 
     class Meta:
@@ -17,10 +18,10 @@ class ShopSerializer(serializers.ModelSerializer):
             "whatsapp", "email", "delivery_fee", "free_shipping_threshold",
             "return_policy", "processing_time", "plan", "status",
             "is_verified", "followers_count", "rating", "reviews_count",
-            "response_time", "joined", "owner_name", "is_following",
+            "response_time", "joined", "owner_name", "owner_id", "is_following",
         ]
         read_only_fields = ["id", "handle", "status", "is_verified", "followers_count",
-                            "rating", "reviews_count", "joined", "owner_name", "is_following"]
+                            "rating", "reviews_count", "joined", "owner_name", "owner_id", "is_following"]
 
     def get_is_following(self, obj):
         request = self.context.get("request")

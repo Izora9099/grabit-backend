@@ -33,17 +33,20 @@ class OrderSerializer(serializers.ModelSerializer):
     shop_name = serializers.CharField(source="shop.name", read_only=True)
     buyer_name = serializers.CharField(source="buyer.get_full_name", read_only=True)
     agent_name = serializers.CharField(source="agent.get_full_name", read_only=True)
+    vendor_user_id = serializers.IntegerField(source="shop.owner.id", read_only=True)
+    agent_user_id = serializers.IntegerField(source="agent.id", allow_null=True, read_only=True)
 
     class Meta:
         model = Order
         fields = [
             "order_id", "status", "city", "delivery_address", "total",
             "escrow_released", "placed_at", "updated_at",
-            "shop_name", "buyer_name", "agent_name", "items", "financials",
+            "shop_name", "buyer_name", "agent_name", "vendor_user_id", "agent_user_id",
+            "items", "financials",
         ]
         read_only_fields = [
             "order_id", "total", "escrow_released", "placed_at", "updated_at",
-            "shop_name", "buyer_name", "agent_name",
+            "shop_name", "buyer_name", "agent_name", "vendor_user_id", "agent_user_id",
         ]
 
 
