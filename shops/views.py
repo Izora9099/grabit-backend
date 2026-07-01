@@ -94,6 +94,14 @@ class MyShopCreateView(generics.CreateAPIView):
     serializer_class = ShopCreateSerializer
     permission_classes = [IsAuthenticated, IsEmailVerified]
 
+    def create(self, request, *args, **kwargs):
+        if hasattr(request.user, "shop"):
+            return Response(
+                {"detail": "You already have a shop.", "code": "shop_exists"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().create(request, *args, **kwargs)
+
 
 class KYCDocumentListCreateView(generics.ListCreateAPIView):
     serializer_class = KYCDocumentSerializer
