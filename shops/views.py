@@ -148,6 +148,24 @@ class KYCSubmitView(APIView):
         return Response({"detail": "Submitted for review. Our team will respond within 1–2 business days."})
 
 
+class ProSellerApplyView(APIView):
+    """Vendor applies for Pro Seller status (tier 2)."""
+    def post(self, request):
+        try:
+            shop = request.user.shop
+        except Exception:
+            return Response({"detail": "No shop found."}, status=status.HTTP_404_NOT_FOUND)
+        if shop.tier == "pro_seller":
+            return Response({"detail": "Shop is already a Pro Seller."}, status=status.HTTP_400_BAD_REQUEST)
+        if shop.tier != "verified":
+            return Response({"detail": "You must be a Verified seller before applying."}, status=status.HTTP_400_BAD_REQUEST)
+        if shop.tier2_application_status == "pending":
+            return Response({"detail": "Application already under review."}, status=status.HTTP_400_BAD_REQUEST)
+        shop.tier2_application_status = "pending"
+        shop.save(update_fields=["tier2_application_status"])
+        return Response({"detail": "Application submitted. Our team will review within 3–5 business days."})
+
+
 class FollowedShopsView(generics.ListAPIView):
     serializer_class = ShopSerializer
 

@@ -11,6 +11,13 @@ class Shop(models.Model):
         ("rejected", "Rejected"),
     ]
     PLAN_CHOICES = [("starter", "Starter"), ("growth", "Growth"), ("premium", "Premium")]
+    TIER_CHOICES = [("starter", "Starter"), ("verified", "Verified"), ("pro_seller", "Pro Seller")]
+    TIER2_STATUS_CHOICES = [
+        ("none", "None"),
+        ("pending", "Pending review"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
 
     owner = models.OneToOneField(User, on_delete=models.CASCADE, related_name="shop")
     name = models.CharField(max_length=120)
@@ -32,6 +39,9 @@ class Shop(models.Model):
     plan = models.CharField(max_length=10, choices=PLAN_CHOICES, default="starter")
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="active")
     is_verified = models.BooleanField(default=False)
+    tier = models.CharField(max_length=15, choices=TIER_CHOICES, default="starter")
+    verified_since = models.DateTimeField(null=True, blank=True)
+    tier2_application_status = models.CharField(max_length=10, choices=TIER2_STATUS_CHOICES, default="none")
     followers_count = models.PositiveIntegerField(default=0)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     reviews_count = models.PositiveIntegerField(default=0)

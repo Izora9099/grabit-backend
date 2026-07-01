@@ -238,6 +238,9 @@ class AdminVerifyShopView(APIView):
         if action == "approve":
             shop.status = "active"
             shop.is_verified = True
+            if shop.tier == "starter":
+                shop.tier = "verified"
+                shop.verified_since = timezone.now()
         else:
             shop.status = "rejected"
         shop.save()

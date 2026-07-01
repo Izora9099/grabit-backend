@@ -9,6 +9,8 @@ class ShopSerializer(serializers.ModelSerializer):
     owner_name = serializers.CharField(source="owner.get_full_name", read_only=True)
     owner_id = serializers.IntegerField(source="owner.id", read_only=True)
     is_following = serializers.SerializerMethodField()
+    completed_orders = serializers.SerializerMethodField()
+    has_active_disputes = serializers.SerializerMethodField()
 
     class Meta:
         model = Shop
@@ -17,17 +19,33 @@ class ShopSerializer(serializers.ModelSerializer):
             "city", "neighbourhood", "logo", "banner", "accent_color",
             "whatsapp", "email", "delivery_fee", "free_shipping_threshold",
             "return_policy", "processing_time", "plan", "status",
-            "is_verified", "followers_count", "rating", "reviews_count",
+            "is_verified", "tier", "verified_since", "tier2_application_status",
+            "followers_count", "rating", "reviews_count",
             "response_time", "joined", "owner_name", "owner_id", "is_following",
+            "completed_orders", "has_active_disputes",
         ]
-        read_only_fields = ["id", "handle", "status", "is_verified", "followers_count",
-                            "rating", "reviews_count", "joined", "owner_name", "owner_id", "is_following"]
+        read_only_fields = [
+            "id", "handle", "status", "is_verified", "tier", "verified_since",
+            "tier2_application_status", "followers_count", "rating", "reviews_count",
+            "joined", "owner_name", "owner_id", "is_following",
+            "completed_orders", "has_active_disputes",
+        ]
 
     def get_is_following(self, obj):
         request = self.context.get("request")
         if request and request.user.is_authenticated:
             return ShopFollow.objects.filter(user=request.user, shop=obj).exists()
         return False
+
+    def get_completed_orders(self, obj):
+        return obj.orders.filter(status="completed").count()
+
+    def get_has_active_disputes(self, obj):
+        from disputes.models import Dispute
+        return Dispute.objects.filter(
+            order__shop=obj,
+            status__in=["open", "urgent", "in_review"],
+        ).exists()
 
 
 class ShopCreateSerializer(serializers.ModelSerializer):
