@@ -96,11 +96,21 @@ class MyShopCreateView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         if hasattr(request.user, "shop"):
+            if request.user.role != "vendor":
+                request.user.role = "vendor"
+                request.user.save(update_fields=["role"])
             return Response(
                 {"detail": "You already have a shop.", "code": "shop_exists"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save()
+        user = self.request.user
+        if user.role != "vendor":
+            user.role = "vendor"
+            user.save(update_fields=["role"])
 
 
 class KYCDocumentListCreateView(generics.ListCreateAPIView):
