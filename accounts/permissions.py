@@ -2,6 +2,17 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
 
+class IsAdminRole(BasePermission):
+    """
+    Gates marketplace admin endpoints on `request.user.role == "admin"`.
+    Distinct from DRF's `IsAdminUser`, which checks `is_staff` — a separate,
+    Django-admin-site concept that isn't tied to the marketplace role field.
+    """
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == "admin")
+
+
 class IsEmailVerified(BasePermission):
     """
     Blocks authenticated users whose email address has not been confirmed.

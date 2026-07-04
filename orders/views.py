@@ -4,6 +4,8 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny
@@ -12,12 +14,13 @@ from rest_framework.views import APIView
 
 from products.models import Product
 from .models import EscrowEvent, Order, Message
-from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ConversationSerializer, ReceiptSerializer
+from .serializers import CreateOrderSerializer, OrderSerializer, MessageSerializer, ConversationSerializer, ReceiptSerializer, PublicReceiptSerializer
 from .signals import order_status_changed
 
 logger = logging.getLogger(__name__)
 
 
+@method_decorator(ratelimit(key="user", rate="10/m", method="POST", block=True), name="post")
 class OrderListCreateView(generics.ListCreateAPIView):
     def get_serializer_class(self):
         return CreateOrderSerializer if self.request.method == "POST" else OrderSerializer
@@ -100,11 +103,16 @@ class OrderReceiptView(generics.RetrieveAPIView):
         return qs.filter(buyer=user)
 
 
+@method_decorator(ratelimit(key="ip", rate="20/m", method="GET", block=True), name="get")
 class PublicReceiptView(APIView):
     """
     Public endpoint — no authentication required.
     Verifies a receipt by GrabIT payment_id (e.g. PAY-1000).
     Returns 404 if the payment doesn't exist or was not paid.
+
+    payment_id is a sequential, guessable value, so the response uses
+    PublicReceiptSerializer (no buyer contact info / exact address) and is
+    rate-limited by IP to prevent enumeration.
     """
     permission_classes = [AllowAny]
 
@@ -119,7 +127,7 @@ class PublicReceiptView(APIView):
         except Payment.DoesNotExist:
             return Response({"detail": "Receipt not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ReceiptSerializer(payment.order)
+        serializer = PublicReceiptSerializer(payment.order)
         return Response(serializer.data)
 
 

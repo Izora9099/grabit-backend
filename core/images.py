@@ -20,6 +20,7 @@ _MAGIC = {
 }
 _MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_DIM = 1800  # longest side cap; reduces storage ~4–8× vs phone-native resolution
+_MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 def _detect_format(data: bytes) -> Optional[str]:
@@ -76,3 +77,21 @@ def process_image_upload(file) -> InMemoryUploadedFile:
         size=output.getbuffer().nbytes,
         charset=None,
     )
+
+
+def validate_pdf_upload(file):
+    """
+    Enforces a size cap and a real magic-byte check on documents that skip
+    image conversion (KYC/dispute evidence PDFs). Returns the file unchanged.
+
+    Raises ValidationError for files that are too large or not a real PDF.
+    """
+    if file.size > _MAX_PDF_BYTES:
+        raise ValidationError("PDF must be 10 MB or smaller.")
+
+    header = file.read(4)
+    file.seek(0)
+    if header != b"%PDF":
+        raise ValidationError("Invalid PDF file.")
+
+    return file

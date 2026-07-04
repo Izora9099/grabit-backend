@@ -222,6 +222,25 @@ class ReceiptSerializer(serializers.ModelSerializer):
         ]
 
 
+class PublicReceiptSerializer(ReceiptSerializer):
+    """
+    Redacted receipt for the public, unauthenticated verification endpoint
+    (GET /orders/verify/<payment_id>/). Payment IDs are sequential and
+    guessable, so this excludes buyer contact info, the exact delivery
+    address, and the mobile-money payment phone to prevent PII harvesting
+    via ID enumeration. See PublicReceiptView.
+    """
+
+    class Meta(ReceiptSerializer.Meta):
+        fields = [
+            "order_id", "placed_at", "status", "city",
+            "items", "subtotal", "delivery_fee", "total",
+            "buyer_name",
+            "shop_name", "shop_handle", "shop_city",
+            "payment_id", "payment_method", "paid_at",
+        ]
+
+
 class MessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(source="sender.get_full_name", read_only=True)
 

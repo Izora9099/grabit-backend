@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from core.images import process_image_upload
+from core.images import process_image_upload, validate_pdf_upload
 from .models import User, Address, AgentKYCDocument
 
 
@@ -117,9 +117,9 @@ class AgentKYCDocumentSerializer(serializers.ModelSerializer):
         # Skip PDFs — check magic bytes: PDF starts with %PDF (0x25 0x50 0x44 0x46)
         header = file.read(4)
         file.seek(0)
-        if header == b"%PDF":
-            return file  # PDFs pass through unchanged
         try:
+            if header == b"%PDF":
+                return validate_pdf_upload(file)
             return process_image_upload(file)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.message)

@@ -36,6 +36,9 @@ class DisputeCreateSerializer(serializers.ModelSerializer):
         fields = ["order", "reason", "description", "evidence"]
 
     def validate_order(self, order):
+        request = self.context["request"]
+        if order.buyer_id != request.user.id:
+            raise serializers.ValidationError("You can only file a dispute on your own order.")
         if order.status not in DISPUTABLE_STATUSES:
             raise serializers.ValidationError(
                 "Disputes can only be filed on active paid orders "

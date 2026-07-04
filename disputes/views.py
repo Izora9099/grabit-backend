@@ -10,7 +10,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.images import process_image_upload
+from core.images import process_image_upload, validate_pdf_upload
 from .models import Dispute
 from .serializers import DisputeSerializer, DisputeCreateSerializer
 from orders.models import EscrowEvent, Order, OrderFinancials
@@ -167,7 +167,7 @@ class ResolveDisputeView(APIView):
                 # Idempotency: skip if a completed refund payout already exists for this buyer+amount
                 existing_refund = (
                     Payout.objects
-                    .filter(recipient=order.buyer, amount=refund_amount)
+                    .filter(order=order, recipient=order.buyer, amount=refund_amount)
                     .exclude(status="failed")
                     .first()
                 )
@@ -236,14 +236,16 @@ class DisputeEvidenceUploadView(APIView):
         if not file:
             return Response({"detail": "No file provided."}, status=400)
 
-        # Convert image evidence to WebP; PDFs pass through unchanged
+        # Convert image evidence to WebP; validate PDFs instead of passing them through
         header = file.read(4)
         file.seek(0)
-        if header != b"%PDF":
-            try:
+        try:
+            if header == b"%PDF":
+                file = validate_pdf_upload(file)
+            else:
                 file = process_image_upload(file)
-            except DjangoValidationError as exc:
-                return Response({"detail": exc.message}, status=400)
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.message}, status=400)
 
         dispute.evidence = file
         dispute.save(update_fields=["evidence"])

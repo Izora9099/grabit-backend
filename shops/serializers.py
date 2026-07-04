@@ -1,7 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from core.images import process_image_upload
+from core.images import process_image_upload, validate_pdf_upload
 from .models import Shop, ShopFollow, ShopReview, KYCDocument
 
 
@@ -95,9 +95,9 @@ class KYCDocumentSerializer(serializers.ModelSerializer):
         # Let PDFs through unchanged; convert images to WebP
         header = file.read(4)
         file.seek(0)
-        if header == b"%PDF":
-            return file
         try:
+            if header == b"%PDF":
+                return validate_pdf_upload(file)
             return process_image_upload(file)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.message)

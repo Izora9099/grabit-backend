@@ -8,11 +8,13 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny, IsAdminUser
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.permissions import IsAdminRole
 from orders.models import Order, OrderFinancials
+from shops.models import Shop
 from .models import Payment, Payout, PlatformConfig, ProcessedWebhook
 from .serializers import InitiatePaymentSerializer, PayoutSerializer, PayoutRequestSerializer, PlatformConfigSerializer
 from .services import FapshiCollectionService, FapshiPayoutService, FapshiError, settle_payment_from_status
@@ -170,8 +172,12 @@ class PayoutRequestView(APIView):
         method = serializer.validated_data["method"]
         phone  = serializer.validated_data["phone"]
 
-        # Recompute available balance under a lock to prevent race conditions
+        # Recompute available balance under a lock to prevent race conditions.
+        # Lock the shop row itself (not just existing Payout rows) so two
+        # concurrent *first* payout requests — where there's nothing yet to
+        # lock via select_for_update() on Payout — still serialize.
         with transaction.atomic():
+            Shop.objects.select_for_update().get(pk=shop.pk)
             earned = (
                 OrderFinancials.objects
                 .filter(order__shop=shop, order__escrow_released=True)
@@ -179,7 +185,6 @@ class PayoutRequestView(APIView):
             )
             paid_out = (
                 Payout.objects
-                .select_for_update()
                 .filter(recipient=request.user, status__in=["paid", "processing"])
                 .aggregate(total=Sum("amount"))["total"] or 0
             )
@@ -268,7 +273,7 @@ class FapshiWebhookView(APIView):
 
 
 class PlatformConfigView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminRole]
 
     def get(self, request):
         return Response(PlatformConfigSerializer(PlatformConfig.get()).data)
